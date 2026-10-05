@@ -1,0 +1,22 @@
+[workspace]
+authors = ["Neclow <neilclow24@gmail.com>"]
+channels = ["conda-forge"]
+name = "phylolid"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+ipykernel = ">=7.4.0,<8"
+fasttext = ">=0.9.2,<0.10"
+huggingface_hub = ">=1.32.0,<2"
+numpy = "<2.0"
+regex = ">=2026.9.29,<2027"
+pandas = ">=3.0.6,<4"
+matplotlib = ">=3.11.2,<4"
+seaborn = ">=0.13.2,<0.14"
+scikit-learn = ">=1.9.1,<2"
+
+[pypi-dependencies]
+pyglottolog = ">=4.0.1, <5"
