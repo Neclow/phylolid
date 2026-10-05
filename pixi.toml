@@ -6,6 +6,8 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+download_glotlid = "python -m pipeline.download_glotlid"
+download_glottolog = "python -m pipeline.download_glottolog glotlid-corpus"
 
 [dependencies]
 ipykernel = ">=7.4.0,<8"
