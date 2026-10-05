@@ -235,6 +235,8 @@ CLAUDE.md
 data/**
 !data/**/
 !data/**/README.md
+# exploration snapshot of GlotLID-C (112 labels), shelved
+data/datasets/_glotlid-corpus/
 
 # Sources for me to read
 notes/
