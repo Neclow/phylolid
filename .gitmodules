@@ -2,3 +2,7 @@
 	path = extern/glottolog
 	url = https://github.com/glottolog/glottolog
 	shallow = true
+[submodule "extern/asjp"]
+	path = extern/asjp
+	url = https://github.com/lexibank/asjp
+	shallow = true

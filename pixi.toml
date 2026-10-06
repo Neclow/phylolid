@@ -6,9 +6,11 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+post_install = "bash scripts/post_install.sh"
 download_glotlid = "python -m pipeline.download_glotlid"
-download_glottolog = "python -m pipeline.download_glottolog glotlid-corpus"
-download_reference_trees = "python -m pipeline.download_reference_trees glotlid-corpus"
+download_glottolog = "python -m pipeline.download_glottolog"
+download_reference_trees = "python -m pipeline.download_reference_trees"
+download_reference_trees_all = "bash pipeline/download_reference_trees_all.sh"
 
 [dependencies]
 ipykernel = ">=7.4.0,<8"
@@ -24,6 +26,8 @@ tabulate = ">=0.10.0,<0.11"
 wandb = ">=0.30.0,<0.31"
 ty = ">=0.0.84,<0.0.85"
 pre-commit = ">=4.6.2,<5"
+gfortran = ">=16.2.0,<17"
+ete4 = ">=4.4.0,<5"
 
 [pypi-dependencies]
 pyglottolog = ">=4.0.1, <5"
