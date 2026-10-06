@@ -225,6 +225,9 @@ _pipeline/
 drafts*.py
 drafts*.ipynb
 
+# Tools built by scripts/post_install.sh
+extern/asjp-software/
+
 # Analysis notebooks
 notebooks/
 
@@ -236,7 +239,7 @@ CLAUDE.md
 data/**
 !data/**/
 !data/**/README.md
-# Shelved exploration data (_datasets, _samples, _predictions)
+# Shelved data (_datasets, _samples, _predictions, _trees)
 data/_*/
 
 # Sources for me to read
