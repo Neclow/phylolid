@@ -1,0 +1,3 @@
+# Git submodules (Glottolog, ASJP) are not our code
+[src]
+exclude = ["./extern/"]

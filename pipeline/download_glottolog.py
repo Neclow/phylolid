@@ -1,28 +1,16 @@
-"""Map each label of a downloaded dataset to its Glottolog languoid and lineage, as in phylaudio's download_glottolog.py.
+"""Map each label of a downloaded dataset to its Glottolog languoid and lineage."""
 
-Labels are the folders data/datasets/<dataset>/<version>/<label>/, named <ISO 639-3>_<script>
-(e.g. glotlid-corpus/v3.1/kal_Latn/), so run the dataset's download script first. The ISO code is
-looked up in a local Glottolog clone (extern/glottolog, tag v5.3).
-
-Writes data/datasets/<dataset>/glottolog.csv, one row per label: name, glottocode, level, and the
-glottocodes of its ancestors, H0 (top-level family) down to the closest one. Some ISO codes are a
-Glottolog dialect or family rather than a language; they are kept at that level, since moving
-dialects up to their language would merge labels (e.g. nrf_Latn into fra_Latn). Some ISO codes are
-mapped by hand (OVERRIDES). Labels whose ISO code is still not in Glottolog are written with an empty
-glottocode and printed.
-
-Example:
-    pixi run download_glottolog
-"""
-import argparse
+from argparse import ArgumentParser
 from glob import glob
 from pathlib import Path
 
 import pandas as pd
+
 from pyglottolog import Glottolog
 
-from src._config import DEFAULT_DATASET_DIR
+from src._config import DATASET_ALIASES, DEFAULT_DATASET_DIR
 
+# Local Glottolog clone (git submodule)
 GLOTTOLOG = "extern/glottolog"
 
 # GlotLID-C labels that cover several languages, or whose ISO code Glottolog lacks -> glottocode. Except fas,
@@ -54,27 +42,48 @@ OVERRIDES = {
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("dataset", help=f"folder in {DEFAULT_DATASET_DIR}/, e.g. glotlid-corpus")
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "dataset",
+        help=f"folder in {DEFAULT_DATASET_DIR}/ or its alias, e.g. glotlid (glotlid-corpus)",
+    )
     args = parser.parse_args()
 
-    dataset_dir = f"{DEFAULT_DATASET_DIR}/{args.dataset}"
-    labels = sorted(Path(path).name for path in glob(f"{dataset_dir}/*/*/"))  # glob skips hidden folders (.cache)
+    dataset_dir = (
+        f"{DEFAULT_DATASET_DIR}/{DATASET_ALIASES.get(args.dataset, args.dataset)}"
+    )
+    # Labels are the folders <dataset_dir>/<version>/<label>/, named <ISO 639-3>_<script> (e.g. kal_Latn).
+    # glob skips hidden folders (.cache)
+    labels = sorted(Path(path).name for path in glob(f"{dataset_dir}/*/*/"))
     if not labels:
-        raise FileNotFoundError(f"No label folders in {dataset_dir}/<version>/. Download the dataset first.")
+        raise FileNotFoundError(
+            f"No label folders in {dataset_dir}/<version>/. Download the dataset first."
+        )
     print(f"Found {len(labels)} labels")
 
-    languoids = Glottolog(GLOTTOLOG).languoids_by_code()  # ISO 639-3 codes and glottocodes -> languoid
+    # ISO 639-3 codes and glottocodes -> languoid
+    languoids = Glottolog(GLOTTOLOG).languoids_by_code()
 
     rows = []
     for label in labels:
         iso = label.split("_")[0]
+        # A languoid can be a dialect or a family rather than a language. It is kept at that level: moving dialects
+        # up to their language would merge labels (e.g. nrf_Latn into fra_Latn)
         languoid = languoids.get(OVERRIDES.get(iso, iso))
+        # Not in Glottolog: empty glottocode, printed below
         if languoid is None:
             rows.append({"label": label})
             continue
-        row = {"label": label, "name": languoid.name, "glottocode": languoid.id, "level": languoid.level.name}
-        row |= {f"H{i}": glottocode for i, (_, glottocode, _) in enumerate(languoid.lineage)}
+        row = {
+            "label": label,
+            "name": languoid.name,
+            "glottocode": languoid.id,
+            "level": languoid.level.name if languoid.level else None,
+        }
+        # Ancestors' glottocodes, from H0 (top-level family) down to the closest one
+        row |= {
+            f"H{i}": glottocode for i, (_, glottocode, _) in enumerate(languoid.lineage)
+        }
         rows.append(row)
 
     df = pd.DataFrame(rows)
