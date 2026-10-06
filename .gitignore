@@ -221,6 +221,7 @@ __marimo__/
 
 # Shelved scripts and scratch outputs
 tmp/
+_pipeline/
 drafts*.py
 drafts*.ipynb
 
@@ -235,8 +236,8 @@ CLAUDE.md
 data/**
 !data/**/
 !data/**/README.md
-# exploration snapshot of GlotLID-C (112 labels), shelved
-data/datasets/_glotlid-corpus/
+# Shelved exploration data (_datasets, _samples, _predictions)
+data/_*/
 
 # Sources for me to read
 notes/
