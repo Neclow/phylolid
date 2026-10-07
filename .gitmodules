@@ -6,3 +6,7 @@
 	path = extern/asjp
 	url = https://github.com/lexibank/asjp
 	shallow = true
+[submodule "extern/ConLID"]
+	path = extern/ConLID
+	url = https://github.com/epfl-nlp/ConLID
+	shallow = true
