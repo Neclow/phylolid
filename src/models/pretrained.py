@@ -1,6 +1,7 @@
 """Off-the-shelf language-ID models, loaded from their published sources (and downloaded the first time)."""
 
 import os
+import re
 import runpy
 
 from abc import ABC, abstractmethod
@@ -11,6 +12,7 @@ import requests
 
 from huggingface_hub import hf_hub_download, snapshot_download
 from pyfranc import franc
+from pyfranc.data import data as franc_profiles
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src._config import DEFAULT_EXTERN_DIR
@@ -44,6 +46,10 @@ class BaseLIDModel(ABC):
     def load(self):
         """Load the model, downloading its files to cache_dir if needed."""
 
+    @abstractmethod
+    def labels(self):
+        """The model's labels, as it writes them."""
+
 
 class FasttextModel(BaseLIDModel):
     """fastText model, from a file in a Hugging Face repository or at a URL."""
@@ -70,6 +76,9 @@ class FasttextModel(BaseLIDModel):
             )
         self.model = fasttext.load_model(path)
 
+    def labels(self):
+        return [label.removeprefix("__label__") for label in self.model.get_labels()]
+
 
 class TransformersModel(BaseLIDModel):
     """Transformers sequence-classification model from a Hugging Face repository."""
@@ -86,13 +95,31 @@ class TransformersModel(BaseLIDModel):
             self.model_id, revision=self.revision, cache_dir=self.cache_dir
         )
 
+    def labels(self):
+        return list(self.model.config.id2label.values())
+
 
 class CLD3Model(BaseLIDModel):
-    """Google's CLD3, built into the gcld3 package: nothing to download."""
+    """Google's CLD3, built into the gcld3 package. The package does not list its languages, so they are read from
+    CLD3's source file at a URL."""
+
+    def __init__(self, model_id, cache_dir, url):
+        self.url = url
+        super().__init__(model_id, cache_dir)
 
     def load(self):
+        self.source_path = url_cache_path(self.cache_dir, self.model_id, self.url)
+        if not os.path.exists(self.source_path):
+            download(self.url, self.source_path)
         # Byte limits as in CLD3's README
         self.model = gcld3.NNetLanguageIdentifier(min_num_bytes=0, max_num_bytes=1000)
+
+    def labels(self):
+        with open(self.source_path, encoding="utf-8") as f:
+            source = f.read()
+        # const char *const TaskContextParams::kLanguageNames[] = {"eo", "co", ...};
+        names = re.search(r"kLanguageNames\[\]\s*=\s*\{(.*?)\};", source, re.S)
+        return re.findall(r'"([^"]+)"', names.group(1)) if names else []
 
 
 class PyfrancModel(BaseLIDModel):
@@ -100,6 +127,12 @@ class PyfrancModel(BaseLIDModel):
 
     def load(self):
         self.model = franc
+
+    def labels(self):
+        # Profiles are grouped by script: {script: {language: trigrams}}
+        return sorted(
+            {language for script in franc_profiles.values() for language in script}
+        )
 
 
 class FunLangIDModel(BaseLIDModel):
@@ -115,6 +148,16 @@ class FunLangIDModel(BaseLIDModel):
             download(self.url, path)
         self.model = runpy.run_path(path)["FunLangID"]()
 
+    def labels(self):
+        # Its lexicon maps each 4-gram to the languages it is frequent in
+        return sorted(
+            {
+                language
+                for languages in self.model.lex_dict.values()
+                for language in languages
+            }
+        )
+
 
 class ConLIDModel(BaseLIDModel):
     """ConLID: weights from a Hugging Face repository, code from the extern/ConLID git submodule."""
@@ -129,3 +172,6 @@ class ConLIDModel(BaseLIDModel):
         )
         conlid = runpy.run_path(f"{DEFAULT_EXTERN_DIR}/ConLID/model.py")["ConLID"]
         self.model = conlid.from_pretrained(dir=path)
+
+    def labels(self):
+        return self.model.get_labels()
