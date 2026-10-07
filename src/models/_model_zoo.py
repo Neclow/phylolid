@@ -38,7 +38,11 @@ TEXT_SET_MODELS: Final = {
         "filename": "openlid-v3.bin",
         "revision": "6b9560483e17e42f48d86cebf22b4b58dffeaa70",
     },
-    "google/cld3": {"model": CLD3Model},
+    # Its language list, which the gcld3 package does not expose (google/cld3, commit of 2022-03-31)
+    "google/cld3": {
+        "model": CLD3Model,
+        "url": "https://raw.githubusercontent.com/google/cld3/b48dc46512566f5a2d41118c8c1116c4f96dc661/src/task_context_params.cc",
+    },
     # XLM-V fine-tuned on FLEURS
     "juliensimon/xlm-v-base-language-id": {
         "model": TransformersModel,
@@ -73,3 +77,15 @@ TEXT_MODELS: Final = {**TEXT_SET_MODELS, **TEXT_EVAL_MODELS}
 MODEL_ZOO: Final = {
     model_id: {**entry, "dtype": "text"} for model_id, entry in TEXT_MODELS.items()
 }
+
+
+def load_model(model_id, cache_dir):
+    """Load a model of the zoo, downloading its files to cache_dir the first time."""
+    entry = MODEL_ZOO[model_id]
+    model_class = entry["model"]
+    # Entries mix classes and strings: tell the type checker this one is a class
+    assert isinstance(model_class, type)
+    source = {
+        key: value for key, value in entry.items() if key not in ("model", "dtype")
+    }
+    return model_class(model_id=model_id, cache_dir=cache_dir, **source)

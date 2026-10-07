@@ -30,3 +30,7 @@ set or serve for evaluation only.
   `<org>--<name>/`.
 - CLD3 and pyfranc are installed with the pixi environment: `pixi.lock` pins
   their versions.
+- `glottolog.csv`, written by `pixi run map_glottolog`: every model label
+  (column `model_id`) with its script, Glottolog languoid and lineage, and how
+  its glottocode was found (`via`). Same columns as
+  `data/datasets/glottolog.csv`.
