@@ -1,4 +1,4 @@
-"""Download or build reference trees of a language family (Glottolog, ASJP) whose leaves are a dataset's labels."""
+"""Download or build reference trees of a language family (Glottolog, ASJP) whose nodes are a dataset's glottocodes."""
 
 import json
 import os
@@ -31,6 +31,17 @@ NJ_OPTIONS = "src/phylo/nj_distances.mao"
 # (https://osf.io/a97sz/: data/worldtree_ml_free.tre, data/languages.csv)
 ASJP19_TREE_URL = "https://osf.io/download/sbh4q/"
 ASJP19_LANGUAGES_URL = "https://osf.io/download/w4jnf/"
+# ASJP tags a word list with the glottocode of its ISO code, the language's, also when the list is a dialect that has
+# its own label (e.g. Norwegian Bokmål, nob_Latn). Such lists, by name -> the dialect's glottocode
+ASJP_DIALECTS = {
+    "NORWEGIAN_BOKMAAL": "norw1259",
+    "NORWEGIAN_BOKMAAL_2": "norw1259",
+    # ASJP's only Nynorsk list, recorded in Toten (eastern Norway)
+    "NORWEGIAN_NYNORSK_TOTEN": "norw1262",
+    # Asante, a variety of Twi
+    "TWI_ASANTE": "twii1234",
+    "TWI_FANTE": "fant1241",
+}
 
 
 def download(url, path):
@@ -103,10 +114,7 @@ def first_leaves(tree, leaf_glottocode):
 
 
 class BaseTreeProcessor(ABC):
-    """Download (or build) a raw tree, then hang a family's labels below its nodes and prune it to them."""
-
-    # Length of the branch between a label and the node it hangs below
-    label_dist = 0
+    """Download (or build) a raw tree, then name the nodes of a family's glottocodes and prune it to them."""
 
     def __init__(self, name, raw_file, glottocode):
         self.name = name
@@ -130,39 +138,33 @@ class BaseTreeProcessor(ABC):
 
     @abstractmethod
     def anchors(self, tree):
-        """Glottocode -> node of the raw tree that labels with this glottocode hang below."""
+        """Glottocode -> its node in the raw tree."""
 
     def process(self, labels, process_args):
         tree = Tree(open(self.raw_file), parser=1)
         anchors = self.anchors(tree)
-        kept, absent = [], []
-        for row in labels.itertuples():
-            # The label's own glottocode; a dialect without a node takes its closest ancestor's (e.g. twi_Latn -> Akan)
-            codes = [row.glottocode] + (
-                row.lineage[::-1] if row.level == "dialect" else []
-            )
-            anchor = next((anchors[code] for code in codes if code in anchors), None)
-            if anchor is None:
-                absent.append(row.label)
-                continue
-            # Each label is its own leaf: labels below one node (e.g. ace_Arab, ace_Latn) are siblings, and a label
-            # never sits above another (fra_Latn is a sibling of the branch holding nrf_Latn)
-            kept.append(anchor.add_child(name=row.label, dist=self.label_dist))
-        # Keep the labels' leaves; single-child nodes are removed and their branch lengths summed
-        tree.prune(kept, preserve_branch_length=True)
+        # Labels of one glottocode (e.g. ace_Arab, ace_Latn) share its node. A glottocode without its own node (e.g. a
+        # dialect without an ASJP word list) is absent, so that no node holds two languages
+        kept = labels["glottocode"].isin(anchors)
+        nodes = []
+        for glottocode in labels.loc[kept, "glottocode"].unique():
+            # ASJP leaves are named by word list
+            anchors[glottocode].name = glottocode
+            nodes.append(anchors[glottocode])
+        # Keep the glottocodes' nodes, also internal ones (e.g. French, above Jerriais); other single-child nodes are
+        # removed and their branch lengths summed
+        tree.prune(nodes, preserve_branch_length=True)
         tree.write(outfile=self.processed_file, parser=1)
         with open(self.processed_args_file, "w", encoding="utf-8") as f:
             json.dump(process_args, f, indent=4)
         print(
-            f"  {len(kept)} labels -> {self.processed_file}; absent: {len(absent)} {absent}"
+            f"  {kept.sum()} labels ({len(nodes)} glottocodes) -> {self.processed_file}; "
+            f"absent: {(~kept).sum()} {labels.loc[~kept, 'label'].tolist()}"
         )
 
 
 class GlottologTreeProcessor(BaseTreeProcessor):
     """Glottolog tree of the family: nodes are glottocodes, every branch has length 1 (one Glottolog level)."""
-
-    # A label is one level below its languoid
-    label_dist = 1
 
     def __init__(self, family):
         super().__init__(
@@ -195,7 +197,9 @@ class ASJP19TreeProcessor(BaseTreeProcessor):
 
     def anchors(self, tree):
         languages = pd.read_csv(self.languages_file, keep_default_na=False)
-        id_to_glottocode = dict(zip(languages["ID"], languages["Glottocode"]))
+        id_to_glottocode = (
+            dict(zip(languages["ID"], languages["Glottocode"])) | ASJP_DIALECTS
+        )
         # Leaves are <family>.<genus>.<doculect ID>
         return first_leaves(
             tree,
@@ -275,14 +279,18 @@ class ASJP21TreeProcessor(BaseTreeProcessor):
 
     def anchors(self, tree):
         ids = pd.read_csv(f"{self.prefix}.csv", keep_default_na=False)
-        return first_leaves(tree, dict(zip(ids["id"], ids["Glottocode"])))
+        glottocodes = [
+            ASJP_DIALECTS.get(name, glottocode)
+            for name, glottocode in zip(ids["Name"], ids["Glottocode"])
+        ]
+        return first_leaves(tree, dict(zip(ids["id"], glottocodes)))
 
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
         "dataset",
-        help=f"folder in {DEFAULT_DATASET_DIR}/ with a glottolog.csv, or its alias, e.g. glotlid (glotlid-corpus)",
+        help=f"folder in {DEFAULT_DATASET_DIR}/ or its alias, e.g. glotlid (glotlid-corpus)",
     )
     parser.add_argument(
         "-g",
@@ -307,14 +315,12 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Labels of all datasets, with their glottocodes and lineages (from map_glottolog)
     dataset = DATASET_ALIASES.get(args.dataset, args.dataset)
-    labels = pd.read_csv(f"{DEFAULT_DATASET_DIR}/{dataset}/glottolog.csv")
+    labels = pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv")
+    labels = labels[labels["dataset"] == dataset]
     # Classes are Glottolog languages and dialects; family-level labels (e.g. nah_Latn) are left out
     is_class = labels["level"].isin(["language", "dialect"])
-    lineage_columns = [column for column in labels.columns if column.startswith("H")]
-    labels["lineage"] = [
-        list(row.dropna()) for _, row in labels[lineage_columns].iterrows()
-    ]
 
     glottolog = Glottolog(args.glottolog_dir)
     glottocodes = HELDOUT_FAMILIES if args.glottocode == "all" else [args.glottocode]
