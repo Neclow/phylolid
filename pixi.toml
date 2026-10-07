@@ -13,6 +13,7 @@ map_glottolog = "python -m pipeline.map_glottolog"
 download_reference_trees = "python -m pipeline.download_reference_trees"
 download_reference_trees_all = "python -m pipeline.download_reference_trees --glottocode all"
 download_models = "python -m pipeline.download_models"
+test = "python -m pytest tests"
 
 [dependencies]
 ipykernel = ">=7.4.0,<8"

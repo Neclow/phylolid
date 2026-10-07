@@ -1,3 +1,6 @@
+# `pre-commit install` installs both git hooks; hooks run on commit unless they set `stages`
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 repos:
   # Same as VS Code save: trim trailing whitespace, isort, black
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -28,3 +31,10 @@ repos:
         language: system
         pass_filenames: false
         types: [python]
+      - id: pytest
+        name: pytest
+        entry: pixi run test
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]
