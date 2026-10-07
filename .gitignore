@@ -231,6 +231,9 @@ extern/asjp-software/
 # Analysis notebooks
 notebooks/
 
+# Pipeline docs, kept local for now
+docs/
+
 
 # Claude stuff
 CLAUDE.md
@@ -238,8 +241,10 @@ CLAUDE.md
 # Data
 data/**
 !data/**/
-!data/**/README.md
-# Shelved data (_datasets, _samples, _predictions, _trees)
+# Only our own READMEs (data/ and its folders), not those inside downloads (e.g. Hugging Face model cards)
+!data/README.md
+!data/*/README.md
+# Shelved data (_datasets, _samples, _predictions, _trees, _models)
 data/_*/
 
 # Sources for me to read

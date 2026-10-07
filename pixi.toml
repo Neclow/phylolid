@@ -11,6 +11,7 @@ download_glotlid = "python -m pipeline.download_glotlid"
 download_glottolog = "python -m pipeline.download_glottolog"
 download_reference_trees = "python -m pipeline.download_reference_trees"
 download_reference_trees_all = "python -m pipeline.download_reference_trees --glottocode all"
+download_models = "python -m pipeline.download_models"
 
 [dependencies]
 ipykernel = ">=7.4.0,<8"
@@ -28,8 +29,11 @@ ty = ">=0.0.84,<0.0.85"
 pre-commit = ">=4.6.2,<5"
 gfortran = ">=16.2.0,<17"
 ete4 = ">=4.4.0,<5"
+gcld3 = ">=3.0.13,<4"
 
 [pypi-dependencies]
 pyglottolog = ">=4.0.1, <5"
 torch = ">=2.14.1, <3"
 lightning = ">=2.6.6, <3"
+transformers = ">=5.19.0, <6"
+pyfranc = ">=0.2.3, <0.3"

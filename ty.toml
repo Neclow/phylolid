@@ -1,3 +1,7 @@
 # Git submodules (Glottolog, ASJP) are not our code
 [src]
 exclude = ["./extern/"]
+
+# gcld3 is a compiled extension without type information
+[analysis]
+replace-imports-with-any = ["gcld3.**"]
