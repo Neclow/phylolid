@@ -1,4 +1,4 @@
-"""Download or build reference trees of a language family (Glottolog, ASJP) whose nodes are a dataset's glottocodes."""
+"""Download or build reference trees of a language family (Glottolog, ASJP) whose nodes are all datasets' glottocodes."""
 
 import json
 import os
@@ -14,7 +14,6 @@ from ete4 import Tree
 from pyglottolog import Glottolog
 
 from src._config import (
-    DATASET_ALIASES,
     DEFAULT_DATASET_DIR,
     DEFAULT_EXTERN_DIR,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
@@ -289,10 +288,6 @@ class ASJP21TreeProcessor(BaseTreeProcessor):
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
-        "dataset",
-        help=f"folder in {DEFAULT_DATASET_DIR}/ or its alias, e.g. glotlid (glotlid-corpus)",
-    )
-    parser.add_argument(
         "-g",
         "--glottolog-dir",
         default=f"{DEFAULT_EXTERN_DIR}/glottolog",
@@ -315,10 +310,12 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Labels of all datasets, with their glottocodes and lineages (from map_glottolog)
-    dataset = DATASET_ALIASES.get(args.dataset, args.dataset)
+    # Labels of all datasets, with their glottocodes and lineages (from map_glottolog). One tree holds them all, so
+    # that a test-only language (e.g. Omnilingual) and a training class (GlotLID-C) have a distance. A label in
+    # several datasets counts once
     labels = pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv")
-    labels = labels[labels["dataset"] == dataset]
+    datasets = sorted(labels["dataset"].unique())
+    labels = labels.drop_duplicates(["label", "glottocode"])
     # Classes are Glottolog languages and dialects; family-level labels (e.g. nah_Latn) are left out
     is_class = labels["level"].isin(["language", "dialect"])
 
@@ -343,7 +340,10 @@ def main():
         for processor in processors:
             processor.maybe_download(overwrite=args.overwrite)
             print(f"Processing: {processor.name}...")
-            processor.process(family_labels, {**vars(args), "glottocode": glottocode})
+            processor.process(
+                family_labels,
+                {**vars(args), "glottocode": glottocode, "datasets": datasets},
+            )
 
 
 if __name__ == "__main__":
