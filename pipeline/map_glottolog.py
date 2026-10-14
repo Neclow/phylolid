@@ -80,6 +80,56 @@ OVERRIDES = {
     "mwr": "raja1256",
     # ISO 639-5 collective code "Berber languages" -> Berber
     "ber": "berb1260",
+    # Macrolanguages written in one standard, mapped to it as Arabic and Chinese above (label audit, 2026-10-14). No
+    # dataset label uses these codes: GlotLID-C has the members (als/aln, nob/nno, lvs/ltg).
+    # Albanian (lid.176, CLD3, FUN-LangID sq): standard Albanian is Tosk-based -> Northern Tosk Albanian
+    "sqi": "tosk1239",
+    # Norwegian (lid.176 and CLD3 no, XLM-V's FLEURS nb_no): Bokmål, Nynorsk having its own nn -> Norwegian Bokmål
+    "nor": "norw1259",
+    # Latvian (lid.176, CLD3, FUN-LangID lv, XLM-V's FLEURS lv_lv, FLORES lvs_Latn text) -> Standard Latvian
+    "lav": "stan1325",
+}
+
+# One model's labels whose meaning differs from their code -> glottocode, for that model only (label audit,
+# 2026-10-14). Matched on the raw label, before any code conversion (langcodes turns lid.176's sh into Serbian)
+MODEL_OVERRIDES = {
+    # lid.176 was trained on Wikipedia, whose codes it uses
+    "fasttext/lid.176": {
+        # The Alemannic Wikipedia (ISO 639-3 als: Tosk Albanian). lid.176 predicts als for 606 of 1,000 Central
+        # Alemannic test sentences, and sq for 966 of 1,000 Tosk ones -> Alemannic
+        "als": "alem1243",
+        # The Serbo-Croatian Wikipedia, apart from sr (Serbian) -> Serbian-Croatian-Bosnian
+        "sh": "sout1528",
+    },
+    # FLORES-200's kon_Latn text is Kituba (FLORES+ relabelled it ktu_Latn); its tzm_Tfng text was relabelled zgh_Tfng
+    "facebook/fasttext-language-identification": {
+        "kon_Latn": "kitu1246",
+        "tzm_Tfng": "stan1324",
+    },
+    # As NLLB: OpenLID-v2 calls the same classes ktu_Latn and zgh_Tfng
+    "laurievb/OpenLID": {"kon_Latn": "kitu1246", "tzm_Tfng": "stan1324"},
+    # FLEURS Fula (ff_sn) transcripts are FLORES fuv_Latn text -> Nigerian Fulfulde (Glottolog: Hausa States Fulfulde)
+    "juliensimon/xlm-v-base-language-id": {"Fula": "nige1253"},
+    # franc's hna profile is Gen, a Gbe language (franc-all now lists it as gej), not Mina of Cameroon (Chadic)
+    "cyb3rk0tik/pyfranc": {"hna": "genn1243"},
+    # Its nrm_Latn class is Norman (Wikipedia's nrm, predicted at p ≈ 1 on Norman text), not Narom (Austronesian)
+    "cis-lmu/glotlid": {"nrm_Latn": "norm1245"},
+    # Matched by FUN-LangID's own n-gram profiles against GlotLID-C text
+    "google-research/fun_langid": {
+        # Central Kanuri text (FLORES and NLLB-Seed), not Manga Kanuri
+        "kr": "cent2050",
+        "kr-Arab": "cent2050",
+        # Dogri text (SMOL), apart from its xnr class, which is Kangri text (UD)
+        "doi": "dogr1250",
+        "doi-Arab": "dogr1250",
+        "xnr": "kang1280",
+        # Marwari, apart from its raj (Rajasthani) class
+        "mwr": "marw1260",
+        # The region picks out Cypriot Greek, a language of its own in Glottolog
+        "el-CY": "cypr1249",
+        # Hmong (RPA spelling) is Hmong Daw, as its mww-CN: kept together (plain hmn has no languoid)
+        "hmn": "hmon1333",
+    },
 }
 
 # Codes of non-language labels: undetermined text (und), no linguistic content (zxx)
@@ -130,7 +180,7 @@ def glotlid_relabels():
     return relabels
 
 
-def map_label(label, languoids, relabels):
+def map_label(label, languoids, relabels, model_overrides=None):
     """Script, how the glottocode was found, and the Glottolog columns of a label (empty if it has no languoid)."""
     language, script = split_label(label)
     # Not a language: the model abstains (undetermined text, no linguistic content)
@@ -140,15 +190,18 @@ def map_label(label, languoids, relabels):
             "via": "non-language",
             "glottocode": NON_LANGUAGE_GLOTTOCODE,
         }
-    iso, via = iso639_3(language)
-    # Codes that GlotLID files under another label follow GlotLID, for consistency (e.g. est -> ekk, tgl -> fil)
-    if iso in relabels:
-        iso, via = relabels[iso], "glotlid"
-    elif iso in OVERRIDES:
-        via = "override"
-    # A languoid can be a dialect or a family rather than a language. It is kept at that level: moving dialects up to
-    # their language would merge labels (e.g. nrf_Latn into fra_Latn)
-    languoid = languoids.get(OVERRIDES.get(iso, iso)) if iso else None
+    if model_overrides and label in model_overrides:
+        languoid, via = languoids.get(model_overrides[label]), "model override"
+    else:
+        iso, via = iso639_3(language)
+        # Codes that GlotLID files under another label follow GlotLID, for consistency (e.g. est -> ekk, tgl -> fil)
+        if iso in relabels:
+            iso, via = relabels[iso], "glotlid"
+        elif iso in OVERRIDES:
+            via = "override"
+        # A languoid can be a dialect or a family rather than a language. It is kept at that level: moving dialects up
+        # to their language would merge labels (e.g. nrf_Latn into fra_Latn)
+        languoid = languoids.get(OVERRIDES.get(iso, iso)) if iso else None
     if languoid is None:
         return {"script": script, "via": via}
     return {
@@ -162,6 +215,32 @@ def map_label(label, languoids, relabels):
             f"H{i}": glottocode for i, (_, glottocode, _) in enumerate(languoid.lineage)
         },
     }
+
+
+def map_model_labels(labels, languoids, relabels, model_overrides):
+    """A model's labels -> map_label rows; a GlotLID refiling that would merge two of the model's codes is undone."""
+    mapped = {
+        label: map_label(label, languoids, relabels, model_overrides)
+        for label in labels
+    }
+    # Codes per glottocode: two codes on one glottocode merge two classes the model keeps apart
+    codes = {}
+    for label, row in mapped.items():
+        codes.setdefault(row.get("glottocode"), set()).add(split_label(label)[0])
+    for label, row in mapped.items():
+        # GlotLID refiled the data, but this model keeps both codes: the label keeps its own code's meaning (e.g. NLLB's
+        # prs_Arab is Dari, not Western Farsi as GlotLID files it)
+        if row["via"] == "glotlid" and len(codes[row.get("glottocode")]) > 1:
+            mapped[label] = map_label(label, languoids, {}, model_overrides)
+    return mapped
+
+
+def print_merges(df):
+    # Different codes of one model still on one glottocode, i.e. one class (script variants are not listed)
+    labels = df[df["glottocode"].notna() & (df["via"] != "non-language")]
+    for (model_id, glottocode), group in labels.groupby(["model_id", "glottocode"]):
+        if group["label"].map(lambda label: split_label(label)[0]).nunique() > 1:
+            print(f"{model_id}: {' '.join(group['label'])} -> {glottocode} (one class)")
 
 
 def write(rows, source_column, output_file):
@@ -207,15 +286,14 @@ def main():
     for model_id in MODEL_ZOO:
         print(f"Loading model: {model_id}")
         labels = load_model(model_id, DEFAULT_CACHE_DIR).labels()
+        mapped = map_model_labels(
+            labels, languoids, relabels, MODEL_OVERRIDES.get(model_id, {})
+        )
         rows += [
-            {
-                "model_id": model_id,
-                "label": label,
-                **map_label(label, languoids, relabels),
-            }
-            for label in labels
+            {"model_id": model_id, "label": label, **mapped[label]} for label in labels
         ]
     write(rows, "model_id", f"{DEFAULT_CACHE_DIR}/glottolog.csv")
+    print_merges(pd.DataFrame(rows))
 
 
 if __name__ == "__main__":
