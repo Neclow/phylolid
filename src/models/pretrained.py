@@ -40,6 +40,9 @@ class BaseLIDModel(ABC):
     model_id is a Hugging Face repository ID, or <org>/<name> for models published elsewhere.
     """
 
+    # Whether predict() gives probabilities over all labels (CRM applies) or only scores of its top labels
+    probabilistic = True
+
     def __init__(self, model_id, cache_dir):
         self.model_id = model_id
         self.cache_dir = cache_dir
@@ -159,7 +162,8 @@ class TransformersModel(BaseLIDModel):
 
 class CLD3Model(BaseLIDModel):
     """Google's CLD3, built into the gcld3 package. The package does not list its languages, so they are read from
-    CLD3's source file at a URL."""
+    CLD3's source file at a URL. Needs our patched gcld3 (pixi.toml), whose results hold the probabilities of all
+    languages."""
 
     def __init__(self, model_id, cache_dir, url):
         self.url = url
@@ -178,6 +182,16 @@ class CLD3Model(BaseLIDModel):
         # const char *const TaskContextParams::kLanguageNames[] = {"eo", "co", ...};
         names = re.search(r"kLanguageNames\[\]\s*=\s*\{(.*?)\};", source, re.S)
         return re.findall(r'"([^"]+)"', names.group(1)) if names else []
+
+    def predict(self, texts):
+        # Result.probabilities (our gcld3 patch) is in labels() order. It is empty when CLD3 answers und without running
+        # its network (text without enough valid bytes, which min_num_bytes=0 makes rare): the row stays 0, a mistake
+        probs = np.zeros((len(texts), len(self.labels())), dtype=np.float32)
+        for row, text in enumerate(texts):
+            probabilities = self.model.FindLanguage(self.preprocess(text)).probabilities
+            if probabilities:
+                probs[row] = probabilities
+        return probs
 
 
 class PyfrancModel(BaseLIDModel):

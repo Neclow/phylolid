@@ -4,7 +4,12 @@ import fasttext
 import numpy as np
 import pytest
 
-from src.models.pretrained import FasttextModel, OpenLIDv2Model, OpenLIDv3Model
+from src.models.pretrained import (
+    CLD3Model,
+    FasttextModel,
+    OpenLIDv2Model,
+    OpenLIDv3Model,
+)
 
 TRAIN = {
     "eng": ["the cat sat on the mat", "a dog and a cat", "the house is big"],
@@ -72,3 +77,33 @@ def test_fasttext_predict_matches_fasttext(tmp_path, loss):
             assert probs[
                 row, names.index(label.removeprefix("__label__"))
             ] == pytest.approx(score, abs=1e-4)
+
+
+def test_cld3_predict_all_languages(tmp_path):
+    # CLD3's own label list (kLanguageNames at commit b48dc46, its output order), where the wrapper caches it
+    labels = """eo co eu ta de mt ps te su uz zh-Latn ne nl sw sq hmn ja no mn so ko kk sl ig mr th zu ml hr bs lo sd cy
+    hy uk pt lv iw cs vi jv be km mk tr fy am zh da sv fi ht af la id fil sm ca el ka sr it sk ru ru-Latn bg ny fa haw gl
+    et ms gd bg-Latn ha is ur mi hi bn hi-Latn fr yi hu xh my tg ro ar lb el-Latn st ceb kn az si ky mg en gu es pl ja-Latn
+    ga lt sn yo pa ku""".split()
+    (tmp_path / "google--cld3").mkdir()
+    names = ", ".join(f'"{label}"' for label in labels)
+    (tmp_path / "google--cld3" / "task_context_params.cc").write_text(
+        f"const char *const TaskContextParams::kLanguageNames[] = {{{names}, nullptr}};",
+        encoding="utf-8",
+    )
+    model = CLD3Model(
+        "google/cld3", str(tmp_path), url="https://example.org/task_context_params.cc"
+    )
+    assert model.probabilistic
+    texts = [
+        "Ceci est une phrase en français, assez longue pour CLD3.",
+        "This is an English sentence.",
+    ]
+    probs = model.predict(texts)
+    assert probs.shape == (2, len(labels))
+    assert probs.sum(axis=1) == pytest.approx([1, 1], abs=1e-4)
+    # Same top language and probability as CLD3's FindLanguage
+    for text, row in zip(texts, probs):
+        result = model.model.FindLanguage(text)
+        assert labels[row.argmax()] == result.language
+        assert row.max() == pytest.approx(result.probability)
