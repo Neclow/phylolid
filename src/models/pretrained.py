@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 
 import fasttext
 import gcld3
+import numpy as np
+import regex
 import requests
 
 from huggingface_hub import hf_hub_download, snapshot_download
@@ -51,6 +53,15 @@ class BaseLIDModel(ABC):
     def labels(self):
         """The model's labels, as it writes them."""
 
+    def predict(self, texts):
+        """Probabilities (N, L) of the model's labels, in labels() order, for N texts without newlines."""
+        raise NotImplementedError(f"{type(self).__name__} cannot predict yet")
+
+    @staticmethod
+    def preprocess(text):
+        """The model's documented input preprocessing, applied by predict(): none unless a subclass says otherwise."""
+        return text
+
 
 class FasttextModel(BaseLIDModel):
     """fastText model, from a file in a Hugging Face repository or at a URL."""
@@ -79,6 +90,52 @@ class FasttextModel(BaseLIDModel):
 
     def labels(self):
         return [label.removeprefix("__label__") for label in self.model.get_labels()]
+
+    def predict(self, texts):
+        texts = [self.preprocess(text) for text in texts]
+        if self.model.f.getArgs().loss.name == "softmax":
+            # Softmax over the output layer, on the mean of the text's input vectors (what fastText's predict computes,
+            # without building a list of labels per text)
+            hidden = np.stack([self.model.get_sentence_vector(text) for text in texts])
+            logits = hidden @ self.model.get_output_matrix().T
+            logits -= logits.max(axis=1, keepdims=True)
+            probs = np.exp(logits)
+            return probs / probs.sum(axis=1, keepdims=True)
+        # Hierarchical softmax (lid.176): fastText's own predict, over all labels
+        index = {label: i for i, label in enumerate(self.model.get_labels())}
+        probs = np.zeros((len(texts), len(index)), dtype=np.float32)
+        labels, scores = self.model.predict(texts, k=-1)
+        for row, (text_labels, text_scores) in enumerate(zip(labels, scores)):
+            probs[row, [index[label] for label in text_labels]] = text_scores
+        return probs
+
+
+# Characters OpenLID removes before identifying a language: neither a word character nor a space, or a digit
+OPENLID_NONWORD = regex.compile(r"[^\p{Word}\p{Zs}]|\d")
+OPENLID_SPACES = regex.compile(r"\s\s+")
+
+
+class OpenLIDv2Model(FasttextModel):
+    """OpenLID-v2, whose model card asks for its cleaning (openlid_normer.clean_line) "for best results"."""
+
+    @staticmethod
+    def preprocess(text):
+        # Copied from https://github.com/hplt-project/openlid/blob/main/retrain_openlid/tools/openlid_normer.py (the copy
+        # in the gated laurievb/OpenLID-v2 dataset could not be read)
+        text = text.strip().replace("\n", " ").lower()
+        text = regex.sub(OPENLID_NONWORD, "", text)
+        return regex.sub(OPENLID_SPACES, " ", text)
+
+
+class OpenLIDv3Model(FasttextModel):
+    """OpenLID-v3, whose model card preprocesses text as OpenLID-v2 cleans it, but squeezing spaces first."""
+
+    @staticmethod
+    def preprocess(text):
+        # Copied from https://huggingface.co/HPLT/OpenLID-v3 (README)
+        text = text.strip().replace("\n", " ").lower()
+        text = regex.sub(OPENLID_SPACES, " ", text)
+        return regex.sub(OPENLID_NONWORD, "", text)
 
 
 class TransformersModel(BaseLIDModel):

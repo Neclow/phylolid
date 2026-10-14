@@ -7,6 +7,8 @@ from .pretrained import (
     ConLIDModel,
     FasttextModel,
     FunLangIDModel,
+    OpenLIDv2Model,
+    OpenLIDv3Model,
     PyfrancModel,
     TransformersModel,
 )
@@ -29,12 +31,12 @@ TEXT_SET_MODELS: Final = {
         "revision": "be5bd6c7f8d7c89e17d6bf1b37fff377c3f5430e",
     },
     "laurievb/OpenLID-v2": {
-        "model": FasttextModel,
+        "model": OpenLIDv2Model,
         "filename": "model.bin",
         "revision": "10b538ebcc452255917c8bdfc38faa49af134cd2",
     },
     "HPLT/OpenLID-v3": {
-        "model": FasttextModel,
+        "model": OpenLIDv3Model,
         "filename": "openlid-v3.bin",
         "revision": "6b9560483e17e42f48d86cebf22b4b58dffeaa70",
     },
