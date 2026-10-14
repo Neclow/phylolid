@@ -18,6 +18,7 @@ from src._config import (
     DEFAULT_EXTERN_DIR,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
     DEFAULT_SPLIT_DIR,
+    GLOTLIDC_MODELS,
     HELDOUT_FAMILIES,
 )
 from src.data.split import (
@@ -33,8 +34,6 @@ GLOTTOLOG = f"{DEFAULT_EXTERN_DIR}/glottolog"
 GLOTLID_DIR = f"{DEFAULT_DATASET_DIR}/glotlid-corpus/v3.1"
 # The revision's short hash, as in download_omnilingual.py
 OMNI_DIR = f"{DEFAULT_DATASET_DIR}/omnilingual-asr/8648ba8"
-# Trained on GlotLID-C: a GlotLID-C language they know can still be held out (they get "--" on it)
-TRAINED_ON_GLOTLID = ["cis-lmu/glotlid", "epfl-nlp/ConLID"]
 # A GlotLID-C language can be held out with at least this many lines and a node in each of these reference trees
 MIN_LINES = 1000
 TREES = ["glottolog", "asjp21"]
@@ -95,7 +94,7 @@ def assign_roles(labels, models, languoids):
     )
 
     # GlotLID-C: unknown to every model not trained on GlotLID-C, not in Omnilingual, enough lines, in every tree
-    other_models = models[~models["model_id"].isin(TRAINED_ON_GLOTLID)]
+    other_models = models[~models["model_id"].isin(GLOTLIDC_MODELS)]
     known_to_others = known_languages(
         other_models["glottocode"].dropna(), languoids, below
     )
