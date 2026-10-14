@@ -11,8 +11,11 @@ from src.models.pretrained import (
     CLD3Model,
     ConLIDModel,
     FasttextModel,
+    FunLangIDModel,
     OpenLIDv2Model,
     OpenLIDv3Model,
+    PyfrancModel,
+    top_labels,
 )
 
 TRAIN = {
@@ -70,7 +73,7 @@ def test_fasttext_predict_matches_fasttext(tmp_path, loss):
         "test/tiny", str(tmp_path), url="https://example.org/tiny.bin"
     )
     texts = ["the cat", "le chien est grand", "ein haus", "x"]
-    probs = model.predict(texts)
+    probs = model.predict_proba(texts)
     assert probs.shape == (len(texts), len(TRAIN))
     assert probs.sum(axis=1) == pytest.approx(np.ones(len(texts)), abs=1e-4)
     # Same probabilities as fastText's own predict over all labels
@@ -98,12 +101,12 @@ def test_cld3_predict_all_languages(tmp_path):
     model = CLD3Model(
         "google/cld3", str(tmp_path), url="https://example.org/task_context_params.cc"
     )
-    assert model.probabilistic
+    assert hasattr(model, "predict_proba")
     texts = [
         "Ceci est une phrase en français, assez longue pour CLD3.",
         "This is an English sentence.",
     ]
-    probs = model.predict(texts)
+    probs = model.predict_proba(texts)
     assert probs.shape == (2, len(labels))
     assert probs.sum(axis=1) == pytest.approx([1, 1], abs=1e-4)
     # Same top language and probability as CLD3's FindLanguage
@@ -127,7 +130,7 @@ def test_conlid_predict_matches_conlid():
     model = ConLIDModel.__new__(ConLIDModel)
     model.model = tiny
     texts = ["the cat", "le chat est sur le tapis", "x"]
-    probs = model.predict(texts)
+    probs = model.predict_proba(texts)
     assert probs.shape == (3, 2)
     # Same probabilities as ConLID's own predict_batched over all labels
     labels, scores = tiny.predict_batched(texts, k=-1)
@@ -136,3 +139,57 @@ def test_conlid_predict_matches_conlid():
             assert probs[row, model.labels().index(label)] == pytest.approx(
                 score, abs=1e-6
             )
+
+
+def test_pyfranc_predict_scores():
+    model = PyfrancModel("cyb3rk0tik/pyfranc", "unused")
+    labels = model.labels()
+    texts = [
+        "Ceci est une phrase en français, assez longue.",
+        "short",
+        "これは日本語の文章です。",
+    ]
+    scores = model.decision_function(texts)
+    assert not hasattr(model, "predict_proba")
+    assert scores.shape == (3, len(labels))
+    # The closest language scores 1; under 10 characters, und; a script of its own, its language alone
+    assert scores[0].max() == 1 and (scores[0] > 0).sum() > 100
+    assert labels[scores[1].argmax()] == "und" and (scores[1] > 0).sum() == 1
+    assert labels[scores[2].argmax()] == "jpn" and (scores[2] > 0).sum() == 1
+
+
+def test_fun_langid_predict_scores(tmp_path):
+    # A stand-in for fun_langid.py with the same interface, where the wrapper caches it: nothing is downloaded
+    (tmp_path / "google-research--fun_langid").mkdir()
+    (tmp_path / "google-research--fun_langid" / "fun_langid.py").write_text(
+        """
+class FunLangID:
+    lex_dict = {"abcd": ("aaa",), "bcde": ("aaa", "bbb"), "cdef": ("ccc",)}
+
+    def predict(self, text, top_n_predictions=5):
+        return [("und", 0)] if not text else [("aaa", 0.5), ("bbb", 0.25)]
+""",
+        encoding="utf-8",
+    )
+    model = FunLangIDModel(
+        "google-research/fun_langid",
+        str(tmp_path),
+        url="https://example.org/fun_langid.py",
+    )
+    assert model.labels() == ["aaa", "bbb", "ccc"]
+    assert not hasattr(model, "predict_proba")
+    scores = model.decision_function(["some text", ""])
+    assert scores[0].tolist() == [0.5, 0.25, 0]
+    # und is not a label: the row stays 0
+    assert scores[1].tolist() == [0, 0, 0]
+
+
+def test_top_labels_und_for_rows_of_zeros():
+    scores = np.array([[0.2, 0.7, 0.1], [0, 0, 0]])
+    assert top_labels(scores, ["a", "b", "c"]) == ["b", "und"]
+
+
+def test_predict_top_label():
+    # Through decision_function for pyfranc, which has no predict_proba
+    model = PyfrancModel("cyb3rk0tik/pyfranc", "unused")
+    assert model.predict(["short", "これは日本語の文章です。"]) == ["und", "jpn"]
