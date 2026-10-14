@@ -19,6 +19,8 @@ DEFAULT_REFERENCE_TREE_DIR: Final = f"{DEFAULT_TREE_DIR}/references"
 DEFAULT_REFERENCE_TREE_RAW_DIR: Final = f"{DEFAULT_REFERENCE_TREE_DIR}/raw"
 DEFAULT_REFERENCE_TREE_PROCESSED_DIR: Final = f"{DEFAULT_REFERENCE_TREE_DIR}/processed"
 DEFAULT_CACHE_DIR: Final = f"{DEFAULT_DATA_DIR}/models"
+# Train, dev, test and held-out sentences, one folder each, and the role of every dataset label (languages.csv)
+DEFAULT_SPLIT_DIR: Final = f"{DEFAULT_DATA_DIR}/splits"
 # Glottocode of non-language labels (undetermined text, no linguistic content), so that scoring works in glottocode
 # space only. Glottolog numbers each prefix from 1234, so it can never be a real glottocode
 NON_LANGUAGE_GLOTTOCODE: Final = "zxxx0000"
