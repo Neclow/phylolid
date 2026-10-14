@@ -32,11 +32,15 @@ ty = ">=0.0.84,<0.0.85"
 pre-commit = ">=4.6.2,<5"
 gfortran = ">=16.2.0,<17"
 ete4 = ">=4.4.0,<5"
-gcld3 = ">=3.0.13,<4"
 langcodes = ">=3.5.1,<4"
 language-data = ">=1.4.0,<2"
 pyarrow = ">=24.0.0,<25"
 pytest = ">=9.1.1,<10"
+# To build the patched gcld3 below: C++ compiler, protobuf (protoc and headers), pybind11
+cxx-compiler = "*"
+libprotobuf = ">=6.33.5,<7"
+pybind11 = ">=3.1.0,<4"
+setuptools = ">=84.0.0,<85"
 
 [pypi-dependencies]
 pyglottolog = ">=4.0.1, <5"
@@ -45,3 +49,9 @@ lightning = ">=2.6.6, <3"
 transformers = ">=5.19.0, <6"
 pyfranc = ">=0.2.3, <0.3"
 torchmetrics = ">=1.9.0, <2"
+# CLD3 with the probabilities of all languages (Result.probabilities), patched in a fork of google/cld3 at gcld3 3.0.13
+gcld3 = { git = "https://github.com/Neclow/cld3", rev = "e43e5b2b3ee6a62908197e703fa3662ac47b3893" }
+
+[pypi-options]
+# Built against the environment's protoc, protobuf headers and pybind11
+no-build-isolation = ["gcld3"]
