@@ -10,14 +10,12 @@ import pandas as pd
 import torch
 
 from ete4 import Tree
-from pyglottolog import Glottolog
 from torchmetrics import MetricCollection
 
 from src._config import (
     DEFAULT_CACHE_DIR,
     DEFAULT_DATASET_DIR,
     DEFAULT_EVAL_DIR,
-    DEFAULT_EXTERN_DIR,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
     DEFAULT_SPLIT_DIR,
     GLOTLIDC_MODELS,
@@ -44,7 +42,10 @@ from src.lid.metrics import (
 )
 from src.models._model_zoo import MODEL_ZOO, load_model
 
-GLOTTOLOG = f"{DEFAULT_EXTERN_DIR}/glottolog"
+# GlotLID-C files (<label>_<source>+<tag>.txt) of a sister language's text, which GlotLID merged under the label:
+# skipped at test, as a model that recognises them would be scored wrong. Not GlotLID's corrections of mislabelled
+# sources (e.g. ktu_Latn +kng), which hold the label's own text. Evidence in notes/label_audit.md
+MERGED_TAGS = {"tet_Latn": ["tdt"], "aii_Syrc": ["syc", "arc"], "fas_Arab": ["prs"]}
 # Splits -> arms: 2 datasets x 2 arms, each scored apart (notes/plan.md, option b)
 ARMS = {"test": "known", "heldout": "unseen"}
 # Raw model labels saved per sentence, with their probabilities or scores
@@ -67,33 +68,24 @@ def lineages(rows):
     }
 
 
-def other_language_tag(file, glottocode, languoids):
-    # Files <label>_<source>+<code>: text a source labelled <code>, which GlotLID filed under this label. When <code> is
-    # another Glottolog language, the text may be a sister language GlotLID merged in (Dari into Persian)
-    for code in file.split("+")[1:]:
-        languoid = languoids.get(code)
-        if languoid and languoid.level.name == "language" and languoid.id != glottocode:
-            return True
-    return False
+def merged(file):
+    label = "_".join(file.split("_")[:2])
+    return any(tag in MERGED_TAGS.get(label, []) for tag in file.split("+")[1:])
 
 
-def load_sentences(model_id, languoids):
+def load_sentences(model_id):
     """Test and held-out sentences: text, class glottocode, file, dataset and split."""
     sentences = pd.DataFrame(
         [{**item, "split": split} for split in ARMS for item in TextDataset(split)]
     )
-    # Checked once per file
-    files = sentences[["file", "glottocode"]].drop_duplicates()
-    files["tagged"] = [
-        other_language_tag(file, glottocode, languoids)
-        for file, glottocode in zip(files["file"], files["glottocode"])
-    ]
-    tagged = sentences.merge(files, on=["file", "glottocode"], how="left")["tagged"]
-    print(
-        f"Skipped {tagged.sum()} sentences of files tagged with another language: "
-        f"{sorted(sentences.loc[tagged, 'file'].unique())}"
+    skipped = sentences["file"].isin(
+        [file for file in sentences["file"].unique() if merged(file)]
     )
-    sentences = sentences[~tagged]
+    print(
+        f"Skipped {skipped.sum()} sentences of merged files: "
+        f"{sorted(sentences.loc[skipped, 'file'].unique())}"
+    )
+    sentences = sentences[~skipped]
     # Models trained on GlotLID-C: scored on Omnilingual only ("--" on GlotLID-C)
     if model_id in GLOTLIDC_MODELS:
         sentences = sentences[sentences["dataset"] != "glotlid-corpus"]
@@ -224,8 +216,7 @@ def main():
         raise SystemExit(f"{output_dir} exists: move or remove it first")
 
     print("== Sentences ==")
-    languoids = Glottolog(GLOTTOLOG).languoids_by_code()
-    sentences = load_sentences(args.model, languoids)
+    sentences = load_sentences(args.model)
     print(sentences.groupby(["dataset", "split"]).size().to_string())
 
     print("== Model ==")
