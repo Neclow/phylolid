@@ -13,6 +13,7 @@ import requests
 from huggingface_hub import hf_hub_download, snapshot_download
 from pyfranc import franc
 from pyfranc.data import data as franc_profiles
+from pyfranc.expressions import expressions as franc_expressions
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src._config import DEFAULT_EXTERN_DIR
@@ -130,9 +131,14 @@ class PyfrancModel(BaseLIDModel):
 
     def labels(self):
         # Profiles are grouped by script: {script: {language: trigrams}}
-        return sorted(
-            {language for script in franc_profiles.values() for language in script}
-        )
+        profiled = {
+            language for script in franc_profiles.values() for language in script
+        }
+        # A language with a script of its own (jpn, kor, ...) has no profile: franc returns it from the script alone.
+        # Its expressions are keyed by script for shared scripts, by language for these
+        script_only = {key for key in franc_expressions if key not in franc_profiles}
+        # und: text too short, or in no known script
+        return sorted(profiled | script_only | {"und"})
 
 
 class FunLangIDModel(BaseLIDModel):
