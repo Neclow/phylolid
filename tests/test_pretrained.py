@@ -1,11 +1,15 @@
 """Unit tests for the off-the-shelf model wrappers in src/models/pretrained.py."""
 
+import runpy
+
 import fasttext
 import numpy as np
 import pytest
 
+from src._config import DEFAULT_EXTERN_DIR
 from src.models.pretrained import (
     CLD3Model,
+    ConLIDModel,
     FasttextModel,
     OpenLIDv2Model,
     OpenLIDv3Model,
@@ -107,3 +111,28 @@ def test_cld3_predict_all_languages(tmp_path):
         result = model.model.FindLanguage(text)
         assert labels[row.argmax()] == result.language
         assert row.max() == pytest.approx(result.probability)
+
+
+def test_conlid_predict_matches_conlid():
+    # A tiny ConLID with random weights: two words, 50 n-gram buckets, two labels
+    conlid = runpy.run_path(f"{DEFAULT_EXTERN_DIR}/ConLID/model.py")["ConLID"]
+    vocab = {"<pad>": 0, "<unk>": 1, "the": 2, "le": 3}
+    tiny = conlid(
+        len(vocab) + 50, 8, 2, bucket=50, min_count=1, minn=2, maxn=3, aggr="mean"
+    )
+    tiny.vocab, tiny.vocab_size = vocab, len(vocab)
+    tiny.id2label = {0: "eng_Latn", 1: "fra_Latn"}
+    tiny.to(tiny.device).eval()
+    # The wrapper around it, without downloading ConLID's weights
+    model = ConLIDModel.__new__(ConLIDModel)
+    model.model = tiny
+    texts = ["the cat", "le chat est sur le tapis", "x"]
+    probs = model.predict(texts)
+    assert probs.shape == (3, 2)
+    # Same probabilities as ConLID's own predict_batched over all labels
+    labels, scores = tiny.predict_batched(texts, k=-1)
+    for row, (text_labels, text_scores) in enumerate(zip(labels, scores)):
+        for label, score in zip(text_labels, text_scores):
+            assert probs[row, model.labels().index(label)] == pytest.approx(
+                score, abs=1e-6
+            )

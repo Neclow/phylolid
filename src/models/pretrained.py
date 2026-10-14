@@ -11,6 +11,7 @@ import gcld3
 import numpy as np
 import regex
 import requests
+import torch
 
 from huggingface_hub import hf_hub_download, snapshot_download
 from pyfranc import franc
@@ -149,15 +150,38 @@ class TransformersModel(BaseLIDModel):
         super().__init__(model_id, cache_dir)
 
     def load(self):
-        self.tokenizer = AutoTokenizer.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
             self.model_id, revision=self.revision, cache_dir=self.cache_dir
         )
+        # Typed as possibly None: tell the type checker it loaded
+        assert tokenizer is not None
+        self.tokenizer = tokenizer
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.model_id, revision=self.revision, cache_dir=self.cache_dir
         )
+        # Inference only, on the GPU when there is one
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model.to(self.device).eval()
 
     def labels(self):
-        return list(self.model.config.id2label.values())
+        # In the order of the output layer
+        return [
+            self.model.config.id2label[i] for i in range(self.model.config.num_labels)
+        ]
+
+    def predict(self, texts):
+        # Truncated as in training (XLM-V: train-xlm.py, on FLEURS' raw transcriptions), but to the model's positions:
+        # XLM-V's tokenizer sets no real maximum length (1e30), and some test sentences reach 2,423 tokens. RoBERTa-style
+        # models (XLM-V) keep the first 2 positions for padding
+        inputs = self.tokenizer(
+            [self.preprocess(text) for text in texts],
+            truncation=True,
+            max_length=self.model.config.max_position_embeddings - 2,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.device)
+        with torch.no_grad():
+            return self.model(**inputs).logits.softmax(dim=-1).cpu().numpy()
 
 
 class CLD3Model(BaseLIDModel):
@@ -249,6 +273,23 @@ class ConLIDModel(BaseLIDModel):
         )
         conlid = runpy.run_path(f"{DEFAULT_EXTERN_DIR}/ConLID/model.py")["ConLID"]
         self.model = conlid.from_pretrained(dir=path)
+        self.model.eval()
 
     def labels(self):
+        # labels.json lists them in output order
         return self.model.get_labels()
+
+    def predict(self, texts):
+        # As ConLID's predict_batched, without sorting the labels: whitespace tokens and their character n-grams as ids,
+        # padded (padding is masked out of the mean), then a softmax
+        ids = [
+            self.model._tokens2ngrams(self.model._tokenize(self.preprocess(text)))
+            for text in texts
+        ]
+        width = max(len(text_ids) for text_ids in ids)
+        padded = [
+            text_ids + [self.model.pad_id] * (width - len(text_ids)) for text_ids in ids
+        ]
+        inputs = torch.tensor(padded, dtype=torch.int, device=self.model.device)
+        with torch.no_grad():
+            return self.model(inputs).softmax(dim=-1).cpu().numpy()
