@@ -1,4 +1,4 @@
-"""Pick the held-out languages of GlotLID-C and Omnilingual, and split GlotLID-C into train, dev, test and held-out sentences."""
+"""Pick the held-out languages of GlotLID-C and Omnilingual, and split their sentences into train, dev, test and held-out, one folder per glottocode."""
 
 import random
 
@@ -20,11 +20,19 @@ from src._config import (
     DEFAULT_SPLIT_DIR,
     HELDOUT_FAMILIES,
 )
-from src.data.split import CAPS, read_sentences, split_sentences, write_sentences
+from src.data.split import (
+    CAPS,
+    read_lines,
+    split_sentences,
+    unique_sentences,
+    write_sentences,
+)
 from src.models._model_zoo import MODEL_ZOO
 
 GLOTTOLOG = f"{DEFAULT_EXTERN_DIR}/glottolog"
 GLOTLID_DIR = f"{DEFAULT_DATASET_DIR}/glotlid-corpus/v3.1"
+# The revision's short hash, as in download_omnilingual.py
+OMNI_DIR = f"{DEFAULT_DATASET_DIR}/omnilingual-asr/8648ba8"
 # Trained on GlotLID-C: a GlotLID-C language they know can still be held out (they get "--" on it)
 TRAINED_ON_GLOTLID = ["cis-lmu/glotlid", "epfl-nlp/ConLID"]
 # A GlotLID-C language can be held out with at least this many lines and a node in each of these reference trees
@@ -116,6 +124,14 @@ def assign_roles(labels, models, languoids):
     glotlid_heldout = set(
         by_language.index[(by_language["lines"] >= MIN_LINES) & in_trees]
     )
+    train_glottocodes = set(
+        labels.loc[
+            glotlid
+            & labels["language"].notna()
+            & ~labels["language"].isin(glotlid_heldout),
+            "glottocode",
+        ]
+    )
 
     def role(row):
         if row.dataset == "glotlid-corpus":
@@ -125,24 +141,55 @@ def assign_roles(labels, models, languoids):
             return "heldout" if row.language in glotlid_heldout else "train"
         if row.language in omni_heldout:
             return "heldout"
-        # The GlotLID-C held-out languages exclude Omnilingual ones, so these are all training languages
-        return "known" if row.language in glotlid_languages else "unused"
+        # A known label's glottocode is a training class (dcc_Arab is not: Deccan is a dialect of Marathi)
+        return "known" if row.glottocode in train_glottocodes else "unused"
 
     return labels.assign(role=[role(row) for row in labels.itertuples()])
 
 
-def split_label(task, seed, output_dir):
-    label, role = task
-    sentences = read_sentences(f"{GLOTLID_DIR}/{label}")
-    # Seeded by label, so a label's split does not depend on the order the labels are processed in
-    random.Random(f"{seed}-{label}").shuffle(sentences)
+def read_class(dataset, labels):
+    """A class's sentences as (file name, sentence); Omnilingual sentences get the file name <label>_omnilingual."""
+    if dataset == "glotlid-corpus":
+        # Files <label>_<source>.txt in name order: a duplicate is kept in the first
+        paths = sorted(
+            path
+            for label in labels
+            for path in Path(f"{GLOTLID_DIR}/{label}").glob("*.txt")
+        )
+        return unique_sentences(read_lines(paths))
+    pairs = (
+        (f"{label}_omnilingual", sentence)
+        for label in labels
+        for sentence in pd.read_csv(
+            f"{OMNI_DIR}/{label}/{label}.tsv",
+            sep="\t",
+            usecols=["sentence"],
+            dtype=str,
+            keep_default_na=False,
+        )["sentence"]
+    )
+    return unique_sentences(pairs)
+
+
+def split_class(task, seed, output_dir):
+    dataset, glottocode, role, labels = task
+    sentences = read_class(dataset, labels)
+    # Seeded by dataset and class, so a class's split does not depend on the order the classes are processed in
+    random.Random(f"{seed}-{dataset}-{glottocode}").shuffle(sentences)
     if role == "train":
         splits = split_sentences(sentences)
     else:
-        splits = {"heldout": sentences[: CAPS["heldout"]]}
+        # Test only: an unseen language, or a known class's Omnilingual text, next to its GlotLID-C test sentences
+        split = "heldout" if role == "heldout" else "test"
+        splits = {split: sentences[: CAPS[split]]}
     for split, rows in splits.items():
-        write_sentences(rows, f"{output_dir}/{split}/{label}")
-    return label, role, {split: len(rows) for split, rows in splits.items()}
+        write_sentences(rows, f"{output_dir}/{split}/{glottocode}")
+    return (
+        dataset,
+        glottocode,
+        role,
+        {split: len(rows) for split, rows in splits.items()},
+    )
 
 
 def parse_args():
@@ -154,7 +201,7 @@ def parse_args():
         "--workers",
         type=int,
         default=8,
-        help="Labels split in parallel; each worker holds a whole label in memory (rus_Cyrl: 9.2M lines)",
+        help="Classes split in parallel; each worker holds a whole class in memory (Russian: 9.2M lines)",
     )
     return parser.parse_args()
 
@@ -162,9 +209,7 @@ def parse_args():
 def main():
     args = parse_args()
     if Path(DEFAULT_SPLIT_DIR).exists():
-        raise SystemExit(
-            f"{DEFAULT_SPLIT_DIR} exists: shelve it first (e.g. data/_splits)"
-        )
+        raise SystemExit(f"{DEFAULT_SPLIT_DIR} exists: move or remove it first")
 
     print("== Held-out languages ==")
     languoids = {l.id: l for l in Glottolog(GLOTTOLOG).languoids()}
@@ -192,19 +237,25 @@ def main():
     print(pd.crosstab(family, heldout["dataset"]).to_string())
 
     print("== Sentences ==")
-    glotlid = labels[
-        (labels["dataset"] == "glotlid-corpus") & (labels["role"] != "dropped")
+    # One task per class: a glottocode's labels (e.g. two scripts) are one class
+    used = labels[labels["role"].isin(["train", "heldout", "known"])]
+    tasks = [
+        (dataset, glottocode, role, sorted(group["label"]))
+        for (dataset, glottocode, role), group in used.groupby(
+            ["dataset", "glottocode", "role"]
+        )
     ]
-    tasks = list(zip(glotlid["label"], glotlid["role"]))
     totals = {}
     with Pool(args.workers) as pool:
-        for label, role, counts in pool.imap_unordered(
-            partial(split_label, seed=args.seed, output_dir=DEFAULT_SPLIT_DIR), tasks
+        for dataset, glottocode, role, counts in pool.imap_unordered(
+            partial(split_class, seed=args.seed, output_dir=DEFAULT_SPLIT_DIR), tasks
         ):
-            print(f"{label} ({role}): {counts}")
+            print(f"{glottocode} {dataset} ({role}): {counts}")
             for split, n in counts.items():
-                totals[split] = totals.get(split, 0) + n
-    print(f"{len(tasks)} labels -> {DEFAULT_SPLIT_DIR}: {totals}")
+                totals[f"{split} ({dataset})"] = (
+                    totals.get(f"{split} ({dataset})", 0) + n
+                )
+    print(f"{len(tasks)} classes -> {DEFAULT_SPLIT_DIR}: {totals}")
 
 
 if __name__ == "__main__":
