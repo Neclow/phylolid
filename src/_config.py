@@ -24,6 +24,8 @@ DEFAULT_CACHE_DIR: Final = f"{DEFAULT_DATA_DIR}/models"
 GLOTLIDC_MODELS: Final = ["cis-lmu/glotlid", "epfl-nlp/ConLID"]
 # Train, dev, test and held-out sentences, one folder each, and the role of every dataset label (languages.csv)
 DEFAULT_SPLIT_DIR: Final = f"{DEFAULT_DATA_DIR}/splits"
+# Scores and per-sentence predictions of each model: zoo/<org>--<name>/, trained/<run>/
+DEFAULT_EVAL_DIR: Final = f"{DEFAULT_DATA_DIR}/eval"
 # Glottocode of non-language labels (undetermined text, no linguistic content), so that scoring works in glottocode
 # space only. Glottolog numbers each prefix from 1234, so it can never be a real glottocode
 NON_LANGUAGE_GLOTTOCODE: Final = "zxxx0000"
