@@ -26,6 +26,7 @@ from src.lid.metrics import (
     UnseenPathSeverity,
     UnseenSameFamily,
     UnseenSeverity,
+    crm,
     hierarchical_recall,
     information_recall,
     lca_f1,
@@ -358,3 +359,23 @@ def test_references_skip_nan():
     metric(torch.tensor([2]), torch.tensor([5]))
     assert metric.references()["best"].item() == pytest.approx(1.2)
     assert metric.references()["random"].item() == pytest.approx(1.2)
+
+
+def test_information_recall_uncounted_language_is_nan():
+    # d is a class but not counted (no evaluation set holds it): its row is NaN; the counted rows are unchanged
+    lineages = list(LINEAGES.values())
+    counted = [lineages[i] for i in [0, 1, 3, 4]]
+    recall = information_recall(lineages, lineages[:3], counted)
+    assert recall[2].isnan().all()
+    assert not recall[[0, 1, 3, 4]].isnan().any()
+
+
+def test_crm_prefers_the_cheap_region():
+    # Classes a, c (sister languages under F) and d (another family). The top class is d, but a and c together hold
+    # more probability, and predicting a costs little when the truth is c
+    cost = 1 - lca_f1([LINEAGES[x] for x in CLASSES], [LINEAGES[x] for x in CLASSES])
+    # Costs: a-c 2/3 (4 levels: 1 - 2/6), across families 1. Expected costs of the first row: a 0.30 * 2/3 + 0.38 = 0.58,
+    # c 0.32 * 2/3 + 0.38 = 0.593, d 0.32 + 0.30 = 0.62
+    probs = torch.tensor([[0.32, 0.30, 0.38], [0.05, 0.05, 0.9]])
+    assert probs.argmax(dim=-1).tolist() == [2, 2]
+    assert crm(probs, cost).tolist() == [0, 2]

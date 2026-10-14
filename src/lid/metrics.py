@@ -30,8 +30,8 @@ def hierarchical_recall(true_lineages, class_lineages):
 def information_recall(true_lineages, class_lineages, counted=None):
     """Information-based hierarchical recall (Valmadre, 2022) of predicting each class for each true language."""
     # A group's information is log2 n - log2 (languages below it), over the n counted languages (default: the true
-    # languages), which must include every true language: sharing a small group is worth more than sharing a large
-    # one, whatever their depths. ihR[y, c] = I(lowest shared group) / I(y)
+    # languages): sharing a small group is worth more than sharing a large one, whatever their depths.
+    # ihR[y, c] = I(lowest shared group) / I(y)
     counted = true_lineages if counted is None else counted
     below = Counter(node for y in counted for node in y)
     n = len(counted)
@@ -40,6 +40,11 @@ def information_recall(true_lineages, class_lineages, counted=None):
     }
     recall = torch.zeros(len(true_lineages), len(class_lineages))
     for i, y in enumerate(true_lineages):
+        # A true language that is not counted (e.g. a zoo model's class that no evaluation set holds) has no
+        # information: NaN, and it is never scored
+        if y[-1] not in information:
+            recall[i] = math.nan
+            continue
         for j, c in enumerate(class_lineages):
             shared = [node for node in y if node in c]
             if shared:
@@ -103,6 +108,13 @@ def nearest(cost):
     # costs (no node) are left out of the minimum and stay NaN
     best = torch.where(cost.isnan(), math.inf, cost).min(dim=1, keepdim=True).values
     return torch.where(cost.isnan(), cost, (cost == best).float())
+
+
+def crm(probs, cost):
+    """Conditional risk minimisation (Karthik et al., 2021): the class with the lowest expected cost, per row of probs."""
+    # probs (N, C) over the classes; cost[y, c]: how bad predicting c is for true class y (C, C). The expected cost of
+    # predicting c is sum_y p(y) cost[y, c]
+    return (probs @ cost).argmin(dim=-1)
 
 
 class KnownAccuracy(MulticlassAccuracy):
