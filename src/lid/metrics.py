@@ -27,12 +27,14 @@ def hierarchical_recall(true_lineages, class_lineages):
     return recall
 
 
-def information_recall(true_lineages, class_lineages):
+def information_recall(true_lineages, class_lineages, counted=None):
     """Information-based hierarchical recall (Valmadre, 2022) of predicting each class for each true language."""
-    # A group's information is log2 n - log2 (languages below it), over the n true languages: sharing a small group
-    # is worth more than sharing a large one, whatever their depths. ihR[y, c] = I(lowest shared group) / I(y)
-    below = Counter(node for y in true_lineages for node in y)
-    n = len(true_lineages)
+    # A group's information is log2 n - log2 (languages below it), over the n counted languages (default: the true
+    # languages), which must include every true language: sharing a small group is worth more than sharing a large
+    # one, whatever their depths. ihR[y, c] = I(lowest shared group) / I(y)
+    counted = true_lineages if counted is None else counted
+    below = Counter(node for y in counted for node in y)
+    n = len(counted)
     information = {
         node: math.log2(n) - math.log2(count) for node, count in below.items()
     }
@@ -95,6 +97,14 @@ def same_family(true_lineages, class_lineages):
     )
 
 
+def nearest(cost):
+    """1 where the class is among the closest to the true language (OOV rank 1: no class strictly closer), 0 elsewhere."""
+    # OOV rank = 1 + the classes strictly closer than the prediction, so tied closest classes all have rank 1. NaN
+    # costs (no node) are left out of the minimum and stay NaN
+    best = torch.where(cost.isnan(), math.inf, cost).min(dim=1, keepdim=True).values
+    return torch.where(cost.isnan(), cost, (cost == best).float())
+
+
 class KnownAccuracy(MulticlassAccuracy):
     """Share of known-language sentences whose top-1 class is the true one."""
 
@@ -131,6 +141,7 @@ class Severity(Metric):
     """Mean cost of the top-1 class, per language, then over languages; subclasses choose the sentences scored."""
 
     full_state_update = False
+    higher_is_better = False
     # Buffer and states, typed as torchmetrics does
     cost: torch.Tensor
     total: torch.Tensor
@@ -167,6 +178,19 @@ class Severity(Metric):
         # Languages with at least one scored sentence
         tested = self.count > 0
         return (self.total[tested] / self.count[tested]).mean()
+
+    def references(self):
+        """Best possible and random scores over the languages compute() scores: the best class, or a uniformly random one."""
+        rows = self.cost[self.count > 0]
+        # The best class per language, leaving out NaN costs; a language whose costs are all NaN has none
+        if self.higher_is_better:
+            best = torch.where(rows.isnan(), -math.inf, rows).max(dim=1).values
+        else:
+            best = torch.where(rows.isnan(), math.inf, rows).min(dim=1).values
+        return {
+            "best": best[best.isfinite()].mean(),
+            "random": rows.nanmean(dim=1).nanmean(),
+        }
 
 
 class KnownSeverity(Severity):
@@ -209,18 +233,18 @@ class UnseenHRSeverity(UnseenSeverity):
 class KnownIHRSeverity(KnownSeverity):
     """1 - ihR of the top-1 class on known-language sentences."""
 
-    def __init__(self, true_lineages, num_classes):
+    def __init__(self, true_lineages, num_classes, counted=None):
         super().__init__(
-            1 - information_recall(true_lineages, true_lineages[:num_classes])
+            1 - information_recall(true_lineages, true_lineages[:num_classes], counted)
         )
 
 
 class UnseenIHRSeverity(UnseenSeverity):
     """1 - ihR of the top-1 class on unseen-language sentences."""
 
-    def __init__(self, true_lineages, num_classes):
+    def __init__(self, true_lineages, num_classes, counted=None):
         super().__init__(
-            1 - information_recall(true_lineages, true_lineages[:num_classes])
+            1 - information_recall(true_lineages, true_lineages[:num_classes], counted)
         )
 
 
@@ -259,5 +283,20 @@ class UnseenPathSeverity(UnseenSeverity):
 class UnseenSameFamily(UnseenSeverity):
     """Share of unseen-language sentences whose top-1 class is in their family (higher is better), per language."""
 
+    higher_is_better = True
+
     def __init__(self, true_lineages, num_classes):
         super().__init__(same_family(true_lineages, true_lineages[:num_classes]))
+
+
+class UnseenOOVRank1(UnseenSeverity):
+    """Share of unseen-language sentences whose top-1 class is one of the closest classes (OOV rank 1), per language."""
+
+    higher_is_better = True
+
+    def __init__(self, true_lineages, num_classes):
+        # Closest in Glottolog path length: 1 - LCA-hF grows with the path (1 - 2 / (p + 2)) and is 1 across families,
+        # so it has the same closest classes
+        super().__init__(
+            nearest(1 - lca_f1(true_lineages, true_lineages[:num_classes]))
+        )

@@ -22,12 +22,14 @@ from src.lid.metrics import (
     UnseenHRSeverity,
     UnseenIHRSeverity,
     UnseenLCAF1Severity,
+    UnseenOOVRank1,
     UnseenPathSeverity,
     UnseenSameFamily,
     UnseenSeverity,
     hierarchical_recall,
     information_recall,
     lca_f1,
+    nearest,
     path_distance,
     same_family,
 )
@@ -277,3 +279,82 @@ def test_unseen_same_family():
     metric = MetricCollection([UnseenSameFamily(lineages, 3)])
     metric(top1, target)
     assert metric.compute()["UnseenSameFamily"].item() == pytest.approx((2 / 3 + 1) / 2)
+
+
+def test_information_recall_counted():
+    # Information counted over one more language, g in G2: 6 languages, G1 still has 2 below it, F now 4
+    lineages = list(LINEAGES.values())
+    counted = lineages + [("F", "G2", "g")]
+    recall = information_recall(lineages, lineages[:3], counted)
+    i = math.log2(6)
+    assert recall[3].tolist() == pytest.approx([(i - 1) / i, (i - 2) / i, 0])
+
+
+def test_nearest_ties_and_nan():
+    cost = torch.tensor(
+        [[0.5, 0.5, 1.0], [math.nan, 2.0, 3.0], [math.nan, math.nan, math.nan]]
+    )
+    table = nearest(cost)
+    # Tied closest classes are both 1; NaN stays NaN and is left out of the minimum
+    assert table[0].tolist() == [1, 1, 0]
+    assert table[1, 0].isnan() and table[1, 1:].tolist() == [1, 0]
+    assert table[2].isnan().all()
+
+
+def test_unseen_oov_rank1():
+    # Classes a, a2 (a sister of a under G1), c, d; unseen b and e
+    lineages = [
+        LINEAGES["a"],
+        ("F", "G1", "a2"),
+        LINEAGES["c"],
+        LINEAGES["d"],
+        LINEAGES["b"],
+        LINEAGES["e"],
+    ]
+    # b predicted a, a2 (both 2 levels away: rank 1) and c (4 levels: rank 3); e predicted d (rank 1)
+    target = torch.tensor([4, 4, 4, 5])
+    top1 = torch.tensor([0, 1, 2, 3])
+    metric = MetricCollection([UnseenOOVRank1(lineages, 4)])
+    metric(top1, target)
+    assert metric.compute()["UnseenOOVRank1"].item() == pytest.approx((2 / 3 + 1) / 2)
+
+
+def test_references():
+    lineages = list(LINEAGES.values())
+    # 1 - LCA-hF: b costs 1/2 (a), 2/3 (c), 1 (d); e costs 1, 1, 1/2 (d)
+    unseen = UnseenLCAF1Severity(lineages, 3)
+    unseen(torch.tensor([0, 2]), torch.tensor([3, 4]))
+    references = unseen.references()
+    assert references["best"].item() == pytest.approx(1 / 2)
+    assert references["random"].item() == pytest.approx(
+        ((1 / 2 + 2 / 3 + 1) / 3 + (1 + 1 + 1 / 2) / 3) / 2
+    )
+    # Only over the languages scored: b alone
+    only_b = UnseenLCAF1Severity(lineages, 3)
+    only_b(torch.tensor([2]), torch.tensor([3]))
+    assert only_b.references()["random"].item() == pytest.approx(
+        (1 / 2 + 2 / 3 + 1) / 3
+    )
+    # Known: the best class is the language itself; a costs 0 (a), 2/3 (c), 1 (d)
+    known = KnownLCAF1Severity(lineages, 3)
+    known(torch.tensor([1]), torch.tensor([0]))
+    assert known.references()["best"].item() == 0
+    assert known.references()["random"].item() == pytest.approx((0 + 2 / 3 + 1) / 3)
+
+
+def test_references_higher_is_better():
+    # Same family: b has 2 of 3 classes in F, e 1 of 3 in K; the best is 1 for both
+    lineages = list(LINEAGES.values())
+    metric = UnseenSameFamily(lineages, 3)
+    metric(torch.tensor([2, 0]), torch.tensor([3, 4]))
+    assert metric.references()["best"].item() == 1
+    assert metric.references()["random"].item() == pytest.approx((2 / 3 + 1 / 3) / 2)
+
+
+def test_references_skip_nan():
+    # f has no node in F's tree: a and c are NaN, d (another family) is 2H
+    lineages = list(LINEAGES.values()) + [("F", "G2", "f")]
+    metric = UnseenPathSeverity(lineages, 3, TREES)
+    metric(torch.tensor([2]), torch.tensor([5]))
+    assert metric.references()["best"].item() == pytest.approx(1.2)
+    assert metric.references()["random"].item() == pytest.approx(1.2)
