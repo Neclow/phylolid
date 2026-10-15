@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from src.data.datasets import FeatureDataset, collate_features
 from src.lid.features import Features
-from src.lid.model import FastText, LitFastText
+from src.lid.model import FastText, LitFastText, Predictor
 
 
 def write(path, text):
@@ -25,7 +25,7 @@ def test_fasttext_is_mean_then_linear():
     assert torch.allclose(logits, model.linear(mean))
 
 
-def test_training_runs(tmp_path):
+def test_training_and_prediction(tmp_path):
     # Two classes, a train and a dev split: one epoch on the CPU, scored on dev
     for split in ["train", "dev"]:
         write(tmp_path / split / "abcd1234" / "abc_Latn_cbc.txt", "the cat\nthe dog\n")
@@ -53,3 +53,11 @@ def test_training_runs(tmp_path):
     assert {"valid_loss", "valid_KnownAccuracy", "valid_KnownMacroF1"} <= set(
         trainer.callback_metrics
     )
+    # The checkpoint behind the zoo models' interface: same classes, probabilities of the trained model
+    trainer.save_checkpoint(tmp_path / "model.ckpt")
+    predictor = Predictor(str(tmp_path / "model.ckpt"), features)
+    assert predictor.labels() == classes
+    texts = ["the cat", "le chien", "x"]
+    batch = collate_features([(features(text), 0) for text in texts])
+    expected = model(batch["ids"], batch["offsets"]).softmax(dim=-1)
+    assert torch.allclose(torch.from_numpy(predictor.predict_proba(texts)), expected)

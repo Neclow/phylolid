@@ -5,6 +5,7 @@ import os
 import re
 
 from argparse import ArgumentParser
+from glob import glob
 from multiprocessing import Pool
 
 import numpy as np
@@ -26,6 +27,7 @@ from src._config import (
     NON_LANGUAGE_GLOTTOCODE,
 )
 from src.data.datasets import TextDataset
+from src.lid.features import Features
 from src.lid.metrics import (
     KnownAccuracy,
     KnownHRSeverity,
@@ -43,6 +45,7 @@ from src.lid.metrics import (
     crm,
     lca_f1,
 )
+from src.lid.model import Predictor
 from src.models._model_zoo import MODEL_ZOO, load_model
 
 # GlotLID-C files (<label>_<source>+<tag>.txt) of a sister language's text, which GlotLID merged under the label:
@@ -104,15 +107,38 @@ def load_sentences(model_id):
     return sentences.reset_index(drop=True)
 
 
-def model_classes(model_id, labels):
-    """The model's classes (glottocodes, und's last if not one already) and each label's class index."""
+def zoo_mapping(model_id):
+    """A zoo model's labels -> glottocode, scripts and lineage (pipeline/map_glottolog.py)."""
     mapping = pd.read_csv(f"{DEFAULT_CACHE_DIR}/glottolog.csv")
-    mapping = mapping[mapping["model_id"] == model_id].set_index("label")
+    return mapping[mapping["model_id"] == model_id].set_index("label")
+
+
+def trained_mapping(classes):
+    """Our model's labels, glottocodes, in zoo_mapping's form: lineages from the datasets' mapping, scripts those of
+    each class's training files (<label>_<source>.txt, labels <iso>_<Script>)."""
+    rows = pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv")
+    rows = rows.drop_duplicates("glottocode").set_index("glottocode")
+    lineage = [column for column in rows.columns if re.fullmatch(r"H\d+", column)]
+    scripts = [
+        {
+            os.path.basename(path).split("_")[1]
+            for path in glob(f"{DEFAULT_SPLIT_DIR}/train/{g}/*.txt")
+        }
+        for g in classes
+    ]
+    mapping = rows.loc[classes, lineage].assign(
+        glottocode=classes, script=[" ".join(sorted(s)) for s in scripts]
+    )
+    return mapping.rename_axis("label")
+
+
+def model_classes(mapping, labels):
+    """The model's classes (glottocodes, und's last if not one already) and each label's class index."""
     glottocodes = [mapping.loc[label, "glottocode"] for label in labels]
     # Labels of one glottocode (scripts) are one class; und (a row of zeros) is the non-language class
     classes = list(dict.fromkeys(glottocodes + [NON_LANGUAGE_GLOTTOCODE]))
     index = {glottocode: i for i, glottocode in enumerate(classes)}
-    return classes, torch.tensor([index[g] for g in glottocodes]), mapping
+    return classes, torch.tensor([index[g] for g in glottocodes])
 
 
 def label_scripts(mapping):
@@ -258,7 +284,13 @@ def score(collection, preds, target):
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, choices=sorted(MODEL_ZOO))
+    # A zoo model, or one we trained
+    model = parser.add_mutually_exclusive_group(required=True)
+    model.add_argument("--model", choices=sorted(MODEL_ZOO), help="Zoo model")
+    model.add_argument(
+        "--checkpoint",
+        help="Lightning checkpoint of a model we trained (pipeline/train.py)",
+    )
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -281,8 +313,15 @@ def parse_args():
 
 def main():
     args = parse_args()
-    name = args.model.replace("/", "--")
-    output_dir = f"{DEFAULT_EVAL_DIR}/zoo/{name}"
+    # Outputs in zoo/<org>--<name>, or trained/<run>, the run being the checkpoint's folder
+    # (<project>/<run>/checkpoints/<file>.ckpt)
+    model_id = args.model or args.checkpoint
+    if args.model:
+        name, kind = args.model.replace("/", "--"), "zoo"
+    else:
+        name = os.path.basename(os.path.dirname(os.path.dirname(args.checkpoint)))
+        kind = "trained"
+    output_dir = f"{DEFAULT_EVAL_DIR}/{kind}/{name}"
     if os.path.exists(output_dir):
         raise SystemExit(f"{output_dir} exists: move or remove it first")
     # To the terminal and to a log file per model
@@ -296,15 +335,21 @@ def main():
         ],
     )
 
-    sentences = load_sentences(args.model)
+    sentences = load_sentences(model_id)
     logging.info(
         "Sentences per dataset and split:\n"
         + sentences.groupby(["dataset", "split"]).size().to_string()
     )
 
-    logging.info(f"Loading {args.model} ({args.device})")
-    model = load_model(args.model, DEFAULT_CACHE_DIR, args.device)
-    classes, label_class, mapping = model_classes(args.model, model.labels())
+    logging.info(f"Loading {model_id} ({args.device})")
+    if args.model:
+        model = load_model(args.model, DEFAULT_CACHE_DIR, args.device)
+        mapping = zoo_mapping(args.model)
+    else:
+        features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
+        model = Predictor(args.checkpoint, features, args.device)
+        mapping = trained_mapping(model.labels())
+    classes, label_class = model_classes(mapping, model.labels())
     n_classes = len(classes)
     und = classes.index(NON_LANGUAGE_GLOTTOCODE)
     held = sorted(sentences.loc[sentences["split"] == "heldout", "glottocode"].unique())

@@ -6,6 +6,7 @@ from lightning.pytorch import LightningModule
 from torch import nn
 from torchmetrics import MetricCollection
 
+from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
 
 
@@ -71,3 +72,28 @@ class LitFastText(LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
+
+
+class Predictor:
+    """A FastText we trained, from its Lightning checkpoint, behind the zoo models' interface (src/models/pretrained.py):
+    labels() (the class glottocodes) and predict_proba()."""
+
+    def __init__(self, checkpoint, features, device="cpu"):
+        self.model_id = checkpoint
+        self.lit = LitFastText.load_from_checkpoint(checkpoint, map_location=device)
+        # The vocabulary must be the one the model was trained with
+        assert features.size == self.lit.hparams["n_features"], "another vocabulary"
+        self.model = self.lit.model.eval()
+        self.features = features
+        self.device = device
+
+    def labels(self):
+        return list(self.lit.hparams["classes"])
+
+    def predict_proba(self, texts):
+        batch = collate_features([(self.features(text), 0) for text in texts])
+        with torch.no_grad():
+            logits = self.model(
+                batch["ids"].to(self.device), batch["offsets"].to(self.device)
+            )
+        return logits.softmax(dim=-1).cpu().numpy()
