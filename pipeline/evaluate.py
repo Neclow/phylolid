@@ -158,7 +158,7 @@ def worker_scores(texts):
 
 
 def predict(
-    model, sentences, batch_size, label_class, n_classes, und, cost, device, parallel
+    model, sentences, batch_size, label_class, n_classes, und, cost, device, n_threads
 ):
     """Top-k raw labels, argmax class and (models with probabilities) CRM class of every sentence."""
     probabilistic = hasattr(model, "predict_proba")
@@ -174,10 +174,11 @@ def predict(
         order[start : start + batch_size] for start in range(0, len(texts), batch_size)
     ]
     batch_texts = ([texts[i] for i in batch] for batch in batches)
-    # Pure-Python models (pyfranc, FUN-LangID): batches scored by DEFAULT_N_THREADS processes, results in order
+    # Batches scored by n_threads processes, each with its own copy of the model, results in order; PyTorch models
+    # (XLM-V, ConLID) score them in this one, on device
     pool = (
-        Pool(DEFAULT_N_THREADS, initializer=load_worker, initargs=(model.model_id,))
-        if parallel
+        Pool(n_threads, initializer=load_worker, initargs=(model.model_id,))
+        if n_threads > 1 and not isinstance(model.model, torch.nn.Module)
         else None
     )
     all_scores = (
@@ -270,9 +271,10 @@ def parse_args():
         help="Device of the PyTorch models (XLM-V, ConLID) and of CRM, e.g. cuda:1 or cpu",
     )
     parser.add_argument(
-        "--parallel",
-        action="store_true",
-        help="Score batches in DEFAULT_N_THREADS processes, each with its own copy of the model (pyfranc, FUN-LangID)",
+        "--n-threads",
+        type=int,
+        default=DEFAULT_N_THREADS,
+        help="CPU processes scoring batches, each with its own copy of the model (PyTorch models use one)",
     )
     return parser.parse_args()
 
@@ -373,7 +375,7 @@ def main():
         und,
         cost,
         args.device,
-        args.parallel,
+        args.n_threads,
     )
 
     collections = metric_collections(true_lineages, n_classes, counted, trees)

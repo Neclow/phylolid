@@ -25,6 +25,12 @@ def parse_args():
     parser.add_argument("--dim", type=int, default=256, help="Embedding size")
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
+        "--n-threads",
+        type=int,
+        default=DEFAULT_N_THREADS,
+        help="CPU processes computing the text features (DataLoader workers)",
+    )
+    parser.add_argument(
         "--device",
         default="cuda:0",
         help="Device on which a torch.Tensor is or will be allocated",
@@ -49,7 +55,7 @@ def main():
             FeatureDataset(split, classes, features),
             batch_size=args.batch_size,
             shuffle=split == "train",
-            num_workers=DEFAULT_N_THREADS,
+            num_workers=args.n_threads,
             collate_fn=collate_features,
             pin_memory=True,
         )

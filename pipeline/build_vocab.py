@@ -28,10 +28,10 @@ def count_words(class_dir):
 def parse_args():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--workers",
+        "--n-threads",
         type=int,
         default=DEFAULT_N_THREADS,
-        help="Classes counted in parallel",
+        help="CPU processes counting classes in parallel",
     )
     return parser.parse_args()
 
@@ -43,7 +43,7 @@ def main():
         raise SystemExit(f"{output_file} exists: move or remove it first")
 
     counts = Counter()
-    with Pool(args.workers) as pool:
+    with Pool(args.n_threads) as pool:
         for class_counts in pool.imap_unordered(
             count_words, glob(f"{DEFAULT_SPLIT_DIR}/train/*")
         ):

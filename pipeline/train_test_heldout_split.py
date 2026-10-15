@@ -197,10 +197,10 @@ def parse_args():
         "--seed", type=int, default=42, help="Seed of the sentence shuffles"
     )
     parser.add_argument(
-        "--workers",
+        "--n-threads",
         type=int,
         default=DEFAULT_N_THREADS,
-        help="Classes split in parallel; each worker holds a whole class in memory (Russian: 9.2M lines)",
+        help="CPU processes splitting classes in parallel; each holds a whole class in memory (Russian: 9.2M lines)",
     )
     return parser.parse_args()
 
@@ -249,7 +249,7 @@ def main():
         )
     ]
     totals = {}
-    with Pool(args.workers) as pool:
+    with Pool(args.n_threads) as pool:
         for dataset, glottocode, role, counts in pool.imap_unordered(
             partial(split_class, seed=args.seed, output_dir=DEFAULT_SPLIT_DIR), tasks
         ):
