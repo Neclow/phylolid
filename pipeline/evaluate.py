@@ -46,6 +46,15 @@ from src.models._model_zoo import MODEL_ZOO, load_model
 # skipped at test, as a model that recognises them would be scored wrong. Not GlotLID's corrections of mislabelled
 # sources (e.g. ktu_Latn +kng), which hold the label's own text. Evidence in notes/label_audit.md
 MERGED_TAGS = {"tet_Latn": ["tdt"], "aii_Syrc": ["syc", "arc"], "fas_Arab": ["prs"]}
+# ISO 15924 variants written in their script's Unicode characters: a label in a variant covers text in the script.
+# Kana covers Japanese text, tagged Jpan (Han + Hiragana + Katakana)
+SCRIPT_VARIANTS = {
+    "Hans": "Hani",
+    "Hant": "Hani",
+    "Cyrs": "Cyrl",
+    "Hira": "Jpan",
+    "Kana": "Jpan",
+}
 # Splits -> arms: 2 datasets x 2 arms, each scored apart (notes/plan.md, option b)
 ARMS = {"test": "known", "heldout": "unseen"}
 # Raw model labels saved per sentence, with their probabilities or scores
@@ -101,6 +110,20 @@ def model_classes(model_id, labels):
     classes = list(dict.fromkeys(glottocodes + [NON_LANGUAGE_GLOTTOCODE]))
     index = {glottocode: i for i, glottocode in enumerate(classes)}
     return classes, torch.tensor([index[g] for g in glottocodes]), mapping
+
+
+def label_scripts(mapping):
+    """Glottocode -> the scripts its labels cover, or None when one's are unknown (it covers every script)."""
+    # Space-separated scripts per label (pipeline/map_glottolog.py)
+    scripts = mapping["script"].str.split()
+    return {
+        glottocode: (
+            None
+            if group.isna().any()
+            else {SCRIPT_VARIANTS.get(s, s) for label in group for s in label}
+        )
+        for glottocode, group in scripts.groupby(mapping["glottocode"])
+    }
 
 
 def class_scores(scores, label_class, n_classes, probabilistic):
@@ -258,6 +281,25 @@ def main():
         g: n_classes + i for i, g in enumerate(held)
     }
     sentences["target"] = sentences["glottocode"].map(index).fillna(-1).astype(int)
+    # Strict rule, by script: a known class's sentences in a script none of its labels covers are left out too. Files
+    # are <iso>_<Script>_<source>
+    scripts = label_scripts(mapping)
+    sentence_scripts = sentences["file"].str.split("_").str[1].replace(SCRIPT_VARIANTS)
+    other_script = np.array(
+        [
+            0 <= target < n_classes
+            and scripts[glottocode] is not None
+            and script not in scripts[glottocode]
+            for glottocode, script, target in zip(
+                sentences["glottocode"], sentence_scripts, sentences["target"]
+            )
+        ]
+    )
+    sentences.loc[other_script, "target"] = -1
+    print(
+        f"Left out {other_script.sum()} known-class sentences in a script the model's labels do not cover: "
+        f"{sorted(set(sentences.loc[other_script, 'glottocode'] + '_' + sentence_scripts[other_script]))}"
+    )
 
     print("== Predictions ==")
     # CRM cost between classes: Glottolog, 1 - LCA-hF
