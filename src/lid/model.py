@@ -7,9 +7,9 @@ from lightning.pytorch import LightningModule
 from torch import nn
 from torchmetrics import MetricCollection
 
-from src._config import PSEUDO_FAMILIES
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
+from src.lid.tree import tree_distances
 
 
 class FastText(nn.Module):
@@ -24,32 +24,19 @@ class FastText(nn.Module):
         return self.linear(self.embedding(ids, offsets))
 
 
-def levels(a, b):
-    """Glottolog levels between two lineages (family ... languoid): up from one to their lowest common ancestor, then
-    down to the other (sisters: 2)."""
-    common = 0
-    while common < min(len(a), len(b)) and a[common] == b[common]:
-        common += 1
-    return len(a) + len(b) - 2 * common
-
-
 def soft_targets(lineages, lam, beta):
     """Training target of each class (rows) over the classes: the class keeps 1 - lam, and lam goes to the other classes
     of its family, by exp(-beta * levels between them). One-hot (cross-entropy) when lam is 0, and for a class without
     relatives: an isolate, or a member of a pseudo-family."""
+    distances = tree_distances(lineages)
+    related = torch.isfinite(distances) & ~torch.eye(len(lineages), dtype=torch.bool)
     targets = torch.eye(len(lineages))
-    for y, lineage in enumerate(lineages):
-        relatives = [
-            c
-            for c, other in enumerate(lineages)
-            if c != y and other[0] == lineage[0] and lineage[0] not in PSEUDO_FAMILIES
-        ]
-        if lam > 0 and relatives:
-            distances = torch.tensor(
-                [float(levels(lineage, lineages[c])) for c in relatives]
-            )
-            targets[y, y] = 1 - lam
-            targets[y, relatives] = lam * torch.softmax(-beta * distances, dim=0)
+    rows = related.any(dim=1)
+    if lam > 0 and rows.any():
+        shares = torch.softmax(
+            torch.where(related, -beta * distances, float("-inf"))[rows], dim=1
+        )
+        targets[rows] = (1 - lam) * targets[rows] + lam * shares
     return targets
 
 

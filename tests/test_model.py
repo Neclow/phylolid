@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from src.data.datasets import FeatureDataset, collate_features
 from src.lid.features import Features
-from src.lid.model import FastText, LitFastText, Predictor, levels, soft_targets
+from src.lid.model import FastText, LitFastText, Predictor, soft_targets
 
 
 def write(path, text):
@@ -23,13 +23,6 @@ def test_fasttext_is_mean_then_linear():
         [model.embedding.weight[[1, 2, 2]].mean(0), model.embedding.weight[7]]
     )
     assert torch.allclose(logits, model.linear(mean))
-
-
-def test_levels():
-    # Sisters, a dialect below its language, and a language two branches away
-    assert levels(("f", "g", "a"), ("f", "g", "b")) == 2
-    assert levels(("f", "l"), ("f", "l", "d")) == 1
-    assert levels(("f", "g", "a"), ("f", "c")) == 3
 
 
 def test_soft_targets():
