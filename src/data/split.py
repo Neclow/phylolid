@@ -3,7 +3,7 @@
 Adapted from GlotLID's dedup_split.py: https://github.com/cisnlp/GlotLID/blob/main/assets/train/dedup_split.py
 """
 
-from pathlib import Path
+import os
 
 # Share of a class's sentences per split (GlotLID's dedup_split.py), then a cap per class: dev and test as the GlotLID
 # paper's test set, train as ConLID
@@ -16,7 +16,7 @@ def read_lines(paths):
     for path in paths:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                yield Path(path).stem, line
+                yield os.path.splitext(os.path.basename(path))[0], line
 
 
 def unique_sentences(pairs):
@@ -48,7 +48,7 @@ def write_sentences(sentences, out_dir):
     by_name = {}
     for name, sentence in sentences:
         by_name.setdefault(name, []).append(sentence)
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
     for name, lines in by_name.items():
         with open(f"{out_dir}/{name}.txt", "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")

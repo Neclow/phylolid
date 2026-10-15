@@ -1,11 +1,12 @@
 """Pick the held-out languages of GlotLID-C and Omnilingual, and split their sentences into train, dev, test and held-out, one folder per glottocode."""
 
+import os
 import random
 
 from argparse import ArgumentParser
 from functools import partial
+from glob import glob
 from multiprocessing import Pool
-from pathlib import Path
 
 import pandas as pd
 
@@ -65,8 +66,8 @@ def tree_nodes(path):
 
 def count_lines(label):
     return sum(
-        path.read_bytes().count(b"\n")
-        for path in Path(f"{GLOTLID_DIR}/{label}").glob("*.txt")
+        open(path, "rb").read().count(b"\n")
+        for path in glob(f"{GLOTLID_DIR}/{label}/*.txt")
     )
 
 
@@ -151,9 +152,7 @@ def read_class(dataset, labels):
     if dataset == "glotlid-corpus":
         # Files <label>_<source>.txt in name order: a duplicate is kept in the first
         paths = sorted(
-            path
-            for label in labels
-            for path in Path(f"{GLOTLID_DIR}/{label}").glob("*.txt")
+            path for label in labels for path in glob(f"{GLOTLID_DIR}/{label}/*.txt")
         )
         return unique_sentences(read_lines(paths))
     pairs = (
@@ -207,16 +206,15 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if Path(DEFAULT_SPLIT_DIR).exists():
+    if os.path.exists(DEFAULT_SPLIT_DIR):
         raise SystemExit(f"{DEFAULT_SPLIT_DIR} exists: move or remove it first")
 
-    print("== Held-out languages ==")
     languoids = {l.id: l for l in Glottolog(GLOTTOLOG).languoids()}
     labels = pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv")
     models = pd.read_csv(f"{DEFAULT_CACHE_DIR}/glottolog.csv")
     assert set(models["model_id"]) == set(MODEL_ZOO), "rerun map_glottolog"
     labels = assign_roles(labels, models, languoids)
-    Path(DEFAULT_SPLIT_DIR).mkdir(parents=True)
+    os.makedirs(DEFAULT_SPLIT_DIR)
     columns = [
         "dataset",
         "label",
@@ -228,14 +226,19 @@ def main():
         "role",
     ]
     labels[columns].to_csv(f"{DEFAULT_SPLIT_DIR}/languages.csv", index=False)
-    print(pd.crosstab(labels["dataset"], labels["role"]).to_string())
+    print(
+        "Labels per role:\n"
+        + pd.crosstab(labels["dataset"], labels["role"]).to_string()
+    )
     heldout = labels[labels["role"] == "heldout"].drop_duplicates(
         ["dataset", "language"]
     )
     family = heldout["H0"].map(lambda g: languoids[g].name)
-    print(pd.crosstab(family, heldout["dataset"]).to_string())
+    print(
+        "Held-out languages per family:\n"
+        + pd.crosstab(family, heldout["dataset"]).to_string()
+    )
 
-    print("== Sentences ==")
     # One task per class: a glottocode's labels (e.g. two scripts) are one class
     used = labels[labels["role"].isin(["train", "heldout", "known"])]
     tasks = [

@@ -5,7 +5,6 @@ import os
 import re
 
 from argparse import ArgumentParser
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -241,8 +240,8 @@ def parse_args():
 def main():
     args = parse_args()
     name = args.model.replace("/", "--")
-    output_dir = Path(f"{DEFAULT_EVAL_DIR}/zoo/{name}")
-    if output_dir.exists():
+    output_dir = f"{DEFAULT_EVAL_DIR}/zoo/{name}"
+    if os.path.exists(output_dir):
         raise SystemExit(f"{output_dir} exists: move or remove it first")
     # To the terminal and to a log file per model
     os.makedirs(f"{DEFAULT_EVAL_DIR}/logs", exist_ok=True)
@@ -358,15 +357,15 @@ def main():
     scores = pd.DataFrame(rows)
     logging.info("Scores:\n" + scores.to_string(index=False))
 
-    output_dir.mkdir(parents=True)
-    scores.to_csv(output_dir / "scores.csv", index=False)
+    os.makedirs(output_dir)
+    scores.to_csv(f"{output_dir}/scores.csv", index=False)
     predictions = sentences.drop(columns="text").assign(
         top_labels=top_labels,
         top_scores=top_scores,
         argmax=[classes[i] for i in argmax],
         crm=[classes[i] if i >= 0 else None for i in crm_pick],
     )
-    predictions.to_parquet(output_dir / "predictions.parquet", index=False)
+    predictions.to_parquet(f"{output_dir}/predictions.parquet", index=False)
     logging.info(f"-> {output_dir}")
 
 

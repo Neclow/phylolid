@@ -1,6 +1,8 @@
 """Datasets over the sentence splits of data/splits."""
 
-from pathlib import Path
+import os
+
+from glob import glob
 
 from torch.utils.data import Dataset
 
@@ -13,19 +15,20 @@ class TextDataset(Dataset):
     def __init__(self, split, split_dir=DEFAULT_SPLIT_DIR):
         self.items = []
         # Files <split>/<glottocode>/<label>_<source>.txt; Omnilingual sentences are <label>_omnilingual.txt
-        for path in sorted(Path(split_dir, split).glob("*/*.txt")):
+        for path in sorted(glob(f"{split_dir}/{split}/*/*.txt")):
+            file = os.path.basename(path).removesuffix(".txt")
             dataset = (
-                "omnilingual-asr"
-                if path.stem.endswith("_omnilingual")
-                else "glotlid-corpus"
+                "omnilingual-asr" if file.endswith("_omnilingual") else "glotlid-corpus"
             )
-            # Split on \n only: a few sentences keep Unicode line separators, which splitlines() would cut
-            for text in path.read_text(encoding="utf-8").rstrip("\n").split("\n"):
+            with open(path, encoding="utf-8") as f:
+                # Split on \n only: a few sentences keep Unicode line separators, which splitlines() would cut
+                texts = f.read().rstrip("\n").split("\n")
+            for text in texts:
                 self.items.append(
                     {
                         "text": text,
-                        "glottocode": path.parent.name,
-                        "file": path.stem,
+                        "glottocode": os.path.basename(os.path.dirname(path)),
+                        "file": file,
                         "dataset": dataset,
                     }
                 )

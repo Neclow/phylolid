@@ -1,9 +1,9 @@
 """Map every label of the datasets and of the model zoo to its Glottolog languoid, script and lineage."""
 
+import os
 import re
 
 from glob import glob
-from pathlib import Path
 
 import langcodes
 import pandas as pd
@@ -175,12 +175,15 @@ def glotlid_relabels():
     that are GlotLID-C labels themselves keep their own mapping, since GlotLID swaps some both ways (kng, ktu).
     """
     corpus = f"{DEFAULT_DATASET_DIR}/{DATASET_ALIASES['glotlid']}"
-    labels = {Path(path).name.split("_")[0] for path in glob(f"{corpus}/*/*/")}
+    labels = {
+        os.path.basename(os.path.normpath(path)).split("_")[0]
+        for path in glob(f"{corpus}/*/*/")
+    }
     relabels = {}
     for path in glob(f"{corpus}/*/*/*+*.txt"):
-        label = Path(path).parent.name.split("_")[0]
+        label = os.path.basename(os.path.dirname(path)).split("_")[0]
         # Tags that are not ISO 639-3 codes (e.g. apcnort) are skipped
-        for code in Path(path).stem.split("+")[1:]:
+        for code in os.path.basename(path).removesuffix(".txt").split("+")[1:]:
             if re.fullmatch(r"[a-z]{3}", code) and code not in labels:
                 relabels[code] = label
     return relabels
@@ -273,21 +276,22 @@ def main():
     languoids = Glottolog(GLOTTOLOG).languoids_by_code()
     relabels = glotlid_relabels()
 
-    print("== Dataset labels ==")
     # Dataset labels are the folders <dataset>/<version>/<label>/, named <ISO 639-3>_<script> (e.g. kal_Latn).
     # glob skips hidden folders (.cache)
     rows = [
         {
-            "dataset": Path(dataset_dir).name,
+            "dataset": os.path.basename(os.path.normpath(dataset_dir)),
             "label": label,
             **map_label(label, languoids, relabels),
         }
         for dataset_dir in sorted(glob(f"{DEFAULT_DATASET_DIR}/*/"))
-        for label in sorted(Path(path).name for path in glob(f"{dataset_dir}*/*/"))
+        for label in sorted(
+            os.path.basename(os.path.normpath(path))
+            for path in glob(f"{dataset_dir}*/*/")
+        )
     ]
     write(rows, "dataset", f"{DEFAULT_DATASET_DIR}/glottolog.csv")
 
-    print("== Model labels ==")
     # A model label's script column: the scripts it can be returned for, space-separated. The model's own data tells
     # them if it can (pyfranc, FUN-LangID), else the label's script tag; empty: unknown (lid.176, CLD3)
     rows = []

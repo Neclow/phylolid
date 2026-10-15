@@ -1,8 +1,7 @@
 """Download the transcripts of the Omnilingual ASR corpus from Hugging Face and split them into sentences."""
 
+import os
 import re
-
-from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -65,13 +64,13 @@ def main():
     fs = HfFileSystem()
     # Folders data/<label>/ (labels <ISO 639-3>_<script>), each with train, dev and test parquet files
     for label_dir in sorted(fs.glob(f"datasets/{REPO}@{REVISION}/data/*")):
-        label = Path(label_dir).name
+        label = os.path.basename(label_dir)
         splits = []
         for path in sorted(fs.glob(f"{label_dir}/*.parquet")):
             with fs.open(path, "rb", block_size=1 << 20) as f:
                 df = pq.ParquetFile(f).read(columns=COLUMNS).to_pandas()
             # All splits are test data for us; the split is kept in a column (train-00000-of-00002.parquet -> train)
-            df["split"] = Path(path).name.split("-")[0]
+            df["split"] = os.path.basename(path).split("-")[0]
             splits.append(df)
         df = pd.concat(splits, ignore_index=True)
         rows = len(df)
@@ -81,7 +80,7 @@ def main():
         df = df.explode("raw_text").dropna(subset="raw_text")
         df = df.rename(columns={"raw_text": "sentence"})
 
-        Path(f"{OUTDIR}/{label}").mkdir(parents=True, exist_ok=True)
+        os.makedirs(f"{OUTDIR}/{label}", exist_ok=True)
         df.to_csv(f"{OUTDIR}/{label}/{label}.tsv", sep="\t", index=False)
         print(f"{label}: {rows} rows -> {len(df)} sentences")
     print(f"{REPO}@{REVISION[:7]} -> {OUTDIR}")
