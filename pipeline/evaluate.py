@@ -27,6 +27,7 @@ from src._config import (
     NON_LANGUAGE_GLOTTOCODE,
 )
 from src.data.datasets import TextDataset
+from src.data.glottolog import lineages
 from src.lid.features import Features
 from src.lid.metrics import (
     KnownAccuracy,
@@ -67,20 +68,6 @@ ARMS = {"test": "known", "heldout": "unseen"}
 TOP_K = 10
 # Reference tree of the path severity (an independent reference to Glottolog)
 PATH_TREE = "asjp21"
-
-
-def lineages(rows):
-    """Glottocode -> its lineage, from the family down to the languoid itself, from glottolog.csv rows."""
-    columns = sorted(
-        (column for column in rows.columns if re.fullmatch(r"H\d+", column)),
-        key=lambda column: int(column[1:]),
-    )
-    rows = rows.dropna(subset=["glottocode"]).drop_duplicates("glottocode")
-    return {
-        row["glottocode"]: tuple(g for g in row[columns] if isinstance(g, str))
-        + (row["glottocode"],)
-        for _, row in rows.iterrows()
-    }
 
 
 def merged(file):
