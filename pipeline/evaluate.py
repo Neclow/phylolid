@@ -1,5 +1,7 @@
 """Score a zoo language-ID model on the known-language (test) and unseen-language (heldout) sentences of data/splits."""
 
+import logging
+import os
 import re
 
 from argparse import ArgumentParser
@@ -90,7 +92,7 @@ def load_sentences(model_id):
     skipped = sentences["file"].isin(
         [file for file in sentences["file"].unique() if merged(file)]
     )
-    print(
+    logging.info(
         f"Skipped {skipped.sum()} sentences of merged files: "
         f"{sorted(sentences.loc[skipped, 'file'].unique())}"
     )
@@ -166,7 +168,7 @@ def predict(model, sentences, batch_size, label_class, n_classes, und, cost, dev
             picks = crm(per_class.to(device), cost).cpu()
             crm_pick[batch] = torch.where(empty, und, picks).numpy()
         if start // batch_size % 100 == 0:
-            print(f"{start + len(batch)} / {len(texts)} sentences")
+            logging.info(f"{start + len(batch)} / {len(texts)} sentences")
     return top_labels, top_scores, argmax, crm_pick
 
 
@@ -238,15 +240,28 @@ def parse_args():
 
 def main():
     args = parse_args()
-    output_dir = Path(f"{DEFAULT_EVAL_DIR}/zoo/{args.model.replace('/', '--')}")
+    name = args.model.replace("/", "--")
+    output_dir = Path(f"{DEFAULT_EVAL_DIR}/zoo/{name}")
     if output_dir.exists():
         raise SystemExit(f"{output_dir} exists: move or remove it first")
+    # To the terminal and to a log file per model
+    os.makedirs(f"{DEFAULT_EVAL_DIR}/logs", exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(f"{DEFAULT_EVAL_DIR}/logs/{name}.log"),
+        ],
+    )
 
-    print("== Sentences ==")
     sentences = load_sentences(args.model)
-    print(sentences.groupby(["dataset", "split"]).size().to_string())
+    logging.info(
+        "Sentences per dataset and split:\n"
+        + sentences.groupby(["dataset", "split"]).size().to_string()
+    )
 
-    print("== Model ==")
+    logging.info(f"Loading {args.model} ({args.device})")
     model = load_model(args.model, DEFAULT_CACHE_DIR, args.device)
     classes, label_class, mapping = model_classes(args.model, model.labels())
     n_classes = len(classes)
@@ -276,7 +291,7 @@ def main():
         )
         for family in HELDOUT_FAMILIES
     }
-    print(
+    logging.info(
         f"{len(model.labels())} labels -> {n_classes} classes; {len(held)} unseen languages"
     )
 
@@ -300,12 +315,11 @@ def main():
         ]
     )
     sentences.loc[other_script, "target"] = -1
-    print(
+    logging.info(
         f"Left out {other_script.sum()} known-class sentences in a script the model's labels do not cover: "
         f"{sorted(set(sentences.loc[other_script, 'glottocode'] + '_' + sentence_scripts[other_script]))}"
     )
 
-    print("== Predictions ==")
     # CRM cost between classes: Glottolog, 1 - LCA-hF
     cost = None
     if hasattr(model, "predict_proba"):
@@ -322,7 +336,6 @@ def main():
         args.device,
     )
 
-    print("== Scores ==")
     collections = metric_collections(true_lineages, n_classes, counted, trees)
     rules = {"argmax": argmax} | ({"crm": crm_pick} if cost is not None else {})
     rows = []
@@ -343,7 +356,7 @@ def main():
                 ):
                     rows.append({"dataset": dataset, "arm": arm, "rule": rule} | row)
     scores = pd.DataFrame(rows)
-    print(scores.to_string(index=False))
+    logging.info("Scores:\n" + scores.to_string(index=False))
 
     output_dir.mkdir(parents=True)
     scores.to_csv(output_dir / "scores.csv", index=False)
@@ -354,7 +367,7 @@ def main():
         crm=[classes[i] if i >= 0 else None for i in crm_pick],
     )
     predictions.to_parquet(output_dir / "predictions.parquet", index=False)
-    print(f"-> {output_dir}")
+    logging.info(f"-> {output_dir}")
 
 
 if __name__ == "__main__":
