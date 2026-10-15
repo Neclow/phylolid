@@ -17,7 +17,6 @@ from src.lid.model import LitFastText
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    parser.add_argument("--project", default="phylolid", help="wandb project")
     # Defaults: ConLID's cross-entropy baseline (papers/conlid.pdf, Table 10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size")
@@ -74,7 +73,8 @@ def main():
         # Dev scores four times per epoch: training is a single epoch
         val_check_interval=0.25,
         fast_dev_run=args.dry_run,
-        logger=WandbLogger(project=args.project, save_dir=DEFAULT_EVAL_DIR),
+        # wandb project and entity from .env (WANDB_PROJECT, WANDB_ENTITY; see .env.example)
+        logger=WandbLogger(save_dir=DEFAULT_EVAL_DIR),
         callbacks=[
             ModelCheckpoint(monitor="valid_loss", mode="min", save_top_k=1),
             TQDMProgressBar(),

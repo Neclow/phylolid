@@ -59,3 +59,7 @@ gcld3 = { git = "https://github.com/Neclow/cld3", rev = "e43e5b2b3ee6a62908197e7
 [pypi-options]
 # Built against the environment's protoc, protobuf headers and pybind11
 no-build-isolation = ["gcld3"]
+
+[activation]
+# Loads the gitignored .env (e.g. the wandb project and entity) into every pixi command
+scripts = ["scripts/load_env.sh"]
