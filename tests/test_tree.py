@@ -2,7 +2,7 @@
 
 import torch
 
-from src.lid.tree import levels, tree_distances
+from src.lid.tree import IGNORE, level_labels, levels, tree_distances
 
 
 def test_levels():
@@ -28,3 +28,19 @@ def test_tree_distances():
     # Other families and the members of a pseudo-family: no distance
     assert distances[0, 3].isnan() and distances[3, 0].isnan()
     assert distances[4, 5].isnan()
+
+
+def test_level_labels():
+    lineages = [
+        # Two languages below one H3 ancestor (i), one below another (j)
+        ("f", "g", "h", "i", "a"),
+        ("f", "g", "h", "i", "b"),
+        ("f", "g", "h", "j", "c"),
+        # A shallower lineage: no H3 ancestor, so the language itself
+        ("f", "d"),
+        # An isolate: its own family; a pseudo-family member: ignored
+        ("z",),
+        ("arti1236", "p"),
+    ]
+    assert level_labels(lineages, 0) == [0, 0, 0, 0, 1, IGNORE]
+    assert level_labels(lineages, 3) == [0, 0, 1, 2, 3, IGNORE]

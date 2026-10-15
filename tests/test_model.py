@@ -82,6 +82,7 @@ def test_training_and_prediction(tmp_path):
         lam=0.1,
         patristic_weight=0.1,
         quartet_weight=0.1,
+        phylonn_weight=0.1,
         lineages=[("f", "abcd1234"), ("f", "efgh1234")],
     )
     trainer = Trainer(
@@ -100,6 +101,8 @@ def test_training_and_prediction(tmp_path):
     trainer.save_checkpoint(tmp_path / "model.ckpt")
     predictor = Predictor(str(tmp_path / "model.ckpt"), features)
     assert predictor.labels() == classes
+    # The phylo-nn heads come back with their sizes: one family (H0); each class is its own group at H3
+    assert [head.out_features for head in predictor.lit.phylonn_heads] == [1, 2]
     texts = ["the cat", "le chien", "x"]
     batch = collate_features([(features(text), 0) for text in texts])
     expected = model(batch["ids"], batch["offsets"]).softmax(dim=-1)

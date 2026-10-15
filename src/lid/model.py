@@ -9,7 +9,7 @@ from torchmetrics import MetricCollection
 
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
-from src.lid.tree import tree_distances
+from src.lid.tree import IGNORE, level_labels, tree_distances
 from src.lid.tree_losses import TreeLosses
 
 
@@ -41,14 +41,29 @@ def soft_targets(lineages, lam, beta):
     return targets
 
 
+# Glottolog levels the phylo-nn heads predict: the family (H0) and the ancestor three levels below it (H3)
+PHYLONN_LEVELS = [0, 3]
+
+
+def masked_cross_entropy(logits, labels):
+    """Cross-entropy over the labels that are not IGNORE (0 when there is none)."""
+    known = labels != IGNORE
+    if not known.any():
+        return logits.sum() * 0.0
+    return nn.functional.cross_entropy(logits[known], labels[known])
+
+
 class LitFastText(LightningModule):
     """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets (lam
-    0: cross-entropy), plus patristic_weight and quartet_weight times the TreeLosses of the sentence embeddings. The
-    classes' lineages are needed for training only.
+    0: cross-entropy), plus patristic_weight and quartet_weight times the TreeLosses of the sentence embeddings, plus
+    phylonn_weight times the phylo-nn heads, which predict each sentence's Glottolog groups at PHYLONN_LEVELS from its
+    embedding.
+    The classes' lineages are needed for training only.
     """
 
     # Buffer of the training targets, typed as torchmetrics does, and the tree losses (training only)
     targets: torch.Tensor
+    phylonn_labels: torch.Tensor
     tree_losses: TreeLosses
 
     def __init__(
@@ -61,12 +76,25 @@ class LitFastText(LightningModule):
         beta=0.5,
         patristic_weight=0.0,
         quartet_weight=0.0,
+        phylonn_weight=0.0,
+        phylonn_sizes=None,
         lineages=None,
     ):
         super().__init__()
+        if lineages is not None:
+            labels = [level_labels(lineages, level) for level in PHYLONN_LEVELS]
+            # Numbers of groups per level: the heads' sizes, saved so that a checkpoint loads without lineages
+            phylonn_sizes = [max(max(level), 0) + 1 for level in labels]
         # Saved with the checkpoint, classes (glottocodes in output order) included
         self.save_hyperparameters(ignore=["lineages"])
+        if phylonn_sizes is not None:
+            self.phylonn_heads = nn.ModuleList(
+                nn.Linear(dim, size) for size in phylonn_sizes
+            )
         if lineages is not None:
+            self.register_buffer(
+                "phylonn_labels", torch.tensor(labels), persistent=False
+            )
             self.register_buffer(
                 "targets", soft_targets(lineages, lam, beta), persistent=False
             )
@@ -96,6 +124,19 @@ class LitFastText(LightningModule):
         for name, value in {"patristic": patristic, "quartet": quartet}.items():
             if weights[name]:
                 loss = loss + weights[name] * value
+        # The phylo-nn heads, one per level; without weight they are trained on the embeddings detached (probes,
+        # outside the model's loss), so they only measure how much of the Glottolog groups the embeddings hold
+        weight = self.hparams["phylonn_weight"]
+        inputs = embeddings if weight else embeddings.detach()
+        phylonn = [
+            masked_cross_entropy(head(inputs), labels[batch["target"]])
+            for head, labels in zip(self.phylonn_heads, self.phylonn_labels)
+        ]
+        probes = 0.0
+        if weight:
+            loss = loss + weight * sum(phylonn)
+        else:
+            probes = sum(phylonn)
         # The number of texts (Lightning would infer it from the ids)
         n = len(batch["target"])
         self.log_dict(
@@ -104,10 +145,15 @@ class LitFastText(LightningModule):
                 "train_ce_loss": ce,
                 "train_patristic_loss": patristic,
                 "train_quartet_loss": quartet,
+            }
+            | {
+                f"train_phylonn_h{level}_loss": value
+                for level, value in zip(PHYLONN_LEVELS, phylonn)
             },
             batch_size=n,
         )
-        return loss
+        # train_loss is the model's objective; the probes train on their own
+        return loss + probes
 
     def validation_step(self, batch, batch_idx):
         logits = self(batch["ids"], batch["offsets"])

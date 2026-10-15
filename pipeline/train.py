@@ -56,6 +56,12 @@ def parse_args():
         default=0.0,
         help="Weight of the quartet loss on class centroids",
     )
+    parser.add_argument(
+        "--phylonn-weight",
+        type=float,
+        default=0.0,
+        help="Weight of the phylo-nn heads predicting each sentence's Glottolog family (H0) and H3 ancestor (0: they only probe)",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
         "--n-threads",
@@ -112,6 +118,7 @@ def main():
         beta=args.soft_beta,
         patristic_weight=args.patristic_weight,
         quartet_weight=args.quartet_weight,
+        phylonn_weight=args.phylonn_weight,
         lineages=[lineage[g] for g in classes],
     )
 
