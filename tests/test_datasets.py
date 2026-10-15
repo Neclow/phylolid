@@ -2,7 +2,8 @@
 
 from torch.utils.data import DataLoader
 
-from src.data.datasets import TextDataset
+from src.data.datasets import FeatureDataset, TextDataset, collate_features
+from src.lid.features import Features
 
 
 def write(path, text):
@@ -39,3 +40,20 @@ def test_text_dataset_batches(tmp_path):
     # The default collate turns a batch of dicts into a dict of lists
     assert batch["text"] == ["one", "two"]
     assert batch["glottocode"] == ["abcd1234", "abcd1234"]
+
+
+def test_feature_dataset_and_batches(tmp_path):
+    write(tmp_path / "train" / "abcd1234" / "abc_Latn_cbc.txt", "the cat\nle chat\n")
+    write(tmp_path / "train" / "efgh1234" / "efg_Latn_pbc.txt", "épée\n")
+    features = Features(["the"])
+    dataset = FeatureDataset(
+        "train", ["efgh1234", "abcd1234"], features, split_dir=tmp_path
+    )
+    assert len(dataset) == 3
+    # Texts read back from the shared buffer, multi-byte characters included; classes in the given order
+    assert dataset[0] == (features("the cat"), 1)
+    assert dataset[2] == (features("épée"), 0)
+    batch = collate_features([dataset[0], dataset[2]])
+    assert batch["ids"].tolist() == features("the cat") + features("épée")
+    assert batch["offsets"].tolist() == [0, len(features("the cat"))]
+    assert batch["target"].tolist() == [1, 0]
