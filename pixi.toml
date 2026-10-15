@@ -15,6 +15,7 @@ download_reference_trees_all = "python -m pipeline.download_reference_trees --gl
 download_models = "python -m pipeline.download_models"
 train_test_heldout_split = "python -m pipeline.train_test_heldout_split"
 evaluate = "python -m pipeline.evaluate"
+build_vocab = "python -m pipeline.build_vocab"
 test = "python -m pytest tests"
 
 [dependencies]
