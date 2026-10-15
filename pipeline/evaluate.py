@@ -5,6 +5,7 @@ import os
 import re
 
 from argparse import ArgumentParser
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,7 @@ from src._config import (
     DEFAULT_CACHE_DIR,
     DEFAULT_DATASET_DIR,
     DEFAULT_EVAL_DIR,
+    DEFAULT_N_THREADS,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
     DEFAULT_SPLIT_DIR,
     GLOTLIDC_MODELS,
@@ -137,12 +139,29 @@ def class_scores(scores, label_class, n_classes, probabilistic):
     )
 
 
-def predict(model, sentences, batch_size, label_class, n_classes, und, cost, device):
+def scores_of(model):
+    """The model's scores over its labels: its probabilities if it has them, else its decision scores."""
+    return getattr(model, "predict_proba", None) or getattr(model, "decision_function")
+
+
+# A worker process's own copy of the model, when batches are scored in parallel
+worker_model = None
+
+
+def load_worker(model_id):
+    global worker_model
+    worker_model = load_model(model_id, DEFAULT_CACHE_DIR)
+
+
+def worker_scores(texts):
+    return scores_of(worker_model)(texts)
+
+
+def predict(
+    model, sentences, batch_size, label_class, n_classes, und, cost, device, parallel
+):
     """Top-k raw labels, argmax class and (models with probabilities) CRM class of every sentence."""
     probabilistic = hasattr(model, "predict_proba")
-    scores_of = getattr(model, "predict_proba", None) or getattr(
-        model, "decision_function"
-    )
     cost = cost.to(device) if cost is not None else None
     labels = np.array(model.labels())
     texts = sentences["text"].tolist()
@@ -151,9 +170,23 @@ def predict(model, sentences, batch_size, label_class, n_classes, und, cost, dev
     crm_pick = np.full(len(texts), -1)
     # Batches of similar lengths: less padding for the GPU models
     order = np.argsort([len(text) for text in texts], kind="stable")
-    for start in range(0, len(texts), batch_size):
-        batch = order[start : start + batch_size]
-        scores = np.asarray(scores_of([texts[i] for i in batch]))
+    batches = [
+        order[start : start + batch_size] for start in range(0, len(texts), batch_size)
+    ]
+    batch_texts = ([texts[i] for i in batch] for batch in batches)
+    # Pure-Python models (pyfranc, FUN-LangID): batches scored by DEFAULT_N_THREADS processes, results in order
+    pool = (
+        Pool(DEFAULT_N_THREADS, initializer=load_worker, initargs=(model.model_id,))
+        if parallel
+        else None
+    )
+    all_scores = (
+        pool.imap(worker_scores, batch_texts)
+        if pool
+        else map(scores_of(model), batch_texts)
+    )
+    for n, (batch, scores) in enumerate(zip(batches, all_scores)):
+        scores = np.asarray(scores)
         top = np.argsort(-scores, axis=1)[:, :TOP_K]
         for row, i in enumerate(batch):
             keep = scores[row, top[row]] > 0
@@ -166,8 +199,10 @@ def predict(model, sentences, batch_size, label_class, n_classes, und, cost, dev
         if probabilistic:
             picks = crm(per_class.to(device), cost).cpu()
             crm_pick[batch] = torch.where(empty, und, picks).numpy()
-        if start // batch_size % 100 == 0:
-            logging.info(f"{start + len(batch)} / {len(texts)} sentences")
+        if n % 100 == 0:
+            logging.info(f"{n * batch_size + len(batch)} / {len(texts)} sentences")
+    if pool:
+        pool.close()
     return top_labels, top_scores, argmax, crm_pick
 
 
@@ -233,6 +268,11 @@ def parse_args():
         "--device",
         default="cuda:0",
         help="Device of the PyTorch models (XLM-V, ConLID) and of CRM, e.g. cuda:1 or cpu",
+    )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Score batches in DEFAULT_N_THREADS processes, each with its own copy of the model (pyfranc, FUN-LangID)",
     )
     return parser.parse_args()
 
@@ -333,6 +373,7 @@ def main():
         und,
         cost,
         args.device,
+        args.parallel,
     )
 
     collections = metric_collections(true_lineages, n_classes, counted, trees)
