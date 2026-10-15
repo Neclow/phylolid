@@ -288,16 +288,32 @@ def main():
     write(rows, "dataset", f"{DEFAULT_DATASET_DIR}/glottolog.csv")
 
     print("== Model labels ==")
+    # A model label's script column: the scripts it can be returned for, space-separated. The model's own data tells
+    # them if it can (pyfranc, FUN-LangID), else the label's script tag; empty: unknown (lid.176, CLD3)
     rows = []
     for model_id in MODEL_ZOO:
         print(f"Loading model: {model_id}")
-        labels = load_model(model_id, DEFAULT_CACHE_DIR).labels()
+        model = load_model(model_id, DEFAULT_CACHE_DIR)
+        labels = model.labels()
+        scripts = model.scripts()
         mapped = map_model_labels(
             labels, languoids, relabels, MODEL_OVERRIDES.get(model_id, {})
         )
+        for label in labels:
+            if label in scripts:
+                mapped[label]["script"] = " ".join(sorted(scripts[label]))
         rows += [
             {"model_id": model_id, "label": label, **mapped[label]} for label in labels
         ]
+    # XLM-V was fine-tuned on FLEURS, whose transcripts are FLORES sentences: its labels take the scripts of NLLB's
+    # FLORES-200 labels of their glottocode
+    flores = {}
+    for row in rows:
+        if row["model_id"] == "facebook/fasttext-language-identification":
+            flores.setdefault(row.get("glottocode"), set()).add(row["script"])
+    for row in rows:
+        if row["model_id"] == "juliensimon/xlm-v-base-language-id":
+            row["script"] = " ".join(sorted(flores[row["glottocode"]]))
     write(rows, "model_id", f"{DEFAULT_CACHE_DIR}/glottolog.csv")
     print_merges(pd.DataFrame(rows))
 
