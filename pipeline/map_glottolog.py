@@ -105,6 +105,9 @@ MODEL_OVERRIDES = {
     "facebook/fasttext-language-identification": {
         "kon_Latn": "kitu1246",
         "tzm_Tfng": "stan1324",
+        # Its ton_Latn class is Tonga (Nyasa): predicted for 982 of 1,000 Tonga (Nyasa) test sentences and none of
+        # Tongan's (evaluation, 2026-10-15)
+        "ton_Latn": "tong1321",
     },
     # As NLLB: OpenLID-v2 calls the same classes ktu_Latn and zgh_Tfng
     "laurievb/OpenLID": {"kon_Latn": "kitu1246", "tzm_Tfng": "stan1324"},
@@ -129,6 +132,9 @@ MODEL_OVERRIDES = {
         "el-CY": "cypr1249",
         # Hmong (RPA spelling) is Hmong Daw, as its mww-CN: kept together (plain hmn has no languoid)
         "hmn": "hmon1333",
+        # Its mhl class is Mape (mlh, letters swapped): predicted for 997 of 1,000 Mape test sentences and none of
+        # Mauwake's (evaluation, 2026-10-15)
+        "mhl": "mape1249",
     },
 }
 
