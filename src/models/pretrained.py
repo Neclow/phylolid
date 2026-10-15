@@ -296,16 +296,17 @@ class FunLangIDModel(BaseLIDModel):
         if not os.path.exists(path):
             download(self.url, path)
         self.model = runpy.run_path(path)["FunLangID"]()
-
-    def labels(self):
-        # Its lexicon maps each 4-gram to the languages it is frequent in
-        return sorted(
+        # Its lexicon maps each 4-gram to the languages it is frequent in; listed once, as walking it is slow
+        self.label_list = sorted(
             {
                 language
                 for languages in self.model.lex_dict.values()
                 for language in languages
             }
         )
+
+    def labels(self):
+        return self.label_list
 
     def scripts(self):
         # A language scores only through its lexicon's 1- to 4-grams: it is returned for their scripts
