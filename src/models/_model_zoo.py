@@ -81,8 +81,8 @@ MODEL_ZOO: Final = {
 }
 
 
-def load_model(model_id, cache_dir):
-    """Load a model of the zoo, downloading its files to cache_dir the first time."""
+def load_model(model_id, cache_dir, device="cpu"):
+    """Load a model of the zoo, downloading its files to cache_dir the first time; PyTorch models go to device."""
     entry = MODEL_ZOO[model_id]
     model_class = entry["model"]
     # Entries mix classes and strings: tell the type checker this one is a class
@@ -90,4 +90,4 @@ def load_model(model_id, cache_dir):
     source = {
         key: value for key, value in entry.items() if key not in ("model", "dtype")
     }
-    return model_class(model_id=model_id, cache_dir=cache_dir, **source)
+    return model_class(model_id=model_id, cache_dir=cache_dir, device=device, **source)

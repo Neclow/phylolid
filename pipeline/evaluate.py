@@ -136,13 +136,12 @@ def class_scores(scores, label_class, n_classes, probabilistic):
     )
 
 
-def predict(model, sentences, batch_size, label_class, n_classes, und, cost):
+def predict(model, sentences, batch_size, label_class, n_classes, und, cost, device):
     """Top-k raw labels, argmax class and (models with probabilities) CRM class of every sentence."""
     probabilistic = hasattr(model, "predict_proba")
     scores_of = getattr(model, "predict_proba", None) or getattr(
         model, "decision_function"
     )
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     cost = cost.to(device) if cost is not None else None
     labels = np.array(model.labels())
     texts = sentences["text"].tolist()
@@ -229,6 +228,11 @@ def parse_args():
         default=256,
         help="Sentences per prediction call (GPU models: mind memory on shared GPUs)",
     )
+    parser.add_argument(
+        "--device",
+        default="cuda:0",
+        help="Device of the PyTorch models (XLM-V, ConLID) and of CRM, e.g. cuda:1 or cpu",
+    )
     return parser.parse_args()
 
 
@@ -243,7 +247,7 @@ def main():
     print(sentences.groupby(["dataset", "split"]).size().to_string())
 
     print("== Model ==")
-    model = load_model(args.model, DEFAULT_CACHE_DIR)
+    model = load_model(args.model, DEFAULT_CACHE_DIR, args.device)
     classes, label_class, mapping = model_classes(args.model, model.labels())
     n_classes = len(classes)
     und = classes.index(NON_LANGUAGE_GLOTTOCODE)
@@ -308,7 +312,14 @@ def main():
         class_lineages = true_lineages[:n_classes]
         cost = 1 - lca_f1(class_lineages, class_lineages)
     top_labels, top_scores, argmax, crm_pick = predict(
-        model, sentences, args.batch_size, label_class, n_classes, und, cost
+        model,
+        sentences,
+        args.batch_size,
+        label_class,
+        n_classes,
+        und,
+        cost,
+        args.device,
     )
 
     print("== Scores ==")

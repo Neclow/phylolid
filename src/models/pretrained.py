@@ -51,12 +51,14 @@ class BaseLIDModel(ABC):
 
     model_id is a Hugging Face repository ID, or <org>/<name> for models published elsewhere. As in sklearn, a model
     has predict_proba when it gives probabilities over all its labels, decision_function when it gives only scores
-    (higher is better): an (N, L) matrix in labels() order, for N texts without newlines.
+    (higher is better): an (N, L) matrix in labels() order, for N texts without newlines. device is where PyTorch
+    models run (XLM-V, ConLID); the others run on the CPU.
     """
 
-    def __init__(self, model_id, cache_dir):
+    def __init__(self, model_id, cache_dir, device="cpu"):
         self.model_id = model_id
         self.cache_dir = cache_dir
+        self.device = device
         self.load()
 
     @abstractmethod
@@ -88,12 +90,18 @@ class FasttextModel(BaseLIDModel):
     """fastText model, from a file in a Hugging Face repository or at a URL."""
 
     def __init__(
-        self, model_id, cache_dir, filename="model.bin", revision=None, url=None
+        self,
+        model_id,
+        cache_dir,
+        filename="model.bin",
+        revision=None,
+        url=None,
+        device="cpu",
     ):
         self.filename = filename
         self.revision = revision
         self.url = url
-        super().__init__(model_id, cache_dir)
+        super().__init__(model_id, cache_dir, device)
 
     def load(self):
         if self.url:
@@ -162,9 +170,9 @@ class OpenLIDv3Model(FasttextModel):
 class TransformersModel(BaseLIDModel):
     """Transformers sequence-classification model from a Hugging Face repository."""
 
-    def __init__(self, model_id, cache_dir, revision):
+    def __init__(self, model_id, cache_dir, revision, device="cpu"):
         self.revision = revision
-        super().__init__(model_id, cache_dir)
+        super().__init__(model_id, cache_dir, device)
 
     def load(self):
         tokenizer = AutoTokenizer.from_pretrained(
@@ -176,8 +184,7 @@ class TransformersModel(BaseLIDModel):
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.model_id, revision=self.revision, cache_dir=self.cache_dir
         )
-        # Inference only, on the GPU when there is one
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Inference only
         self.model.to(self.device).eval()
 
     def labels(self):
@@ -206,9 +213,9 @@ class CLD3Model(BaseLIDModel):
     CLD3's source file at a URL. Needs our patched gcld3 (pixi.toml), whose results hold the probabilities of all
     languages."""
 
-    def __init__(self, model_id, cache_dir, url):
+    def __init__(self, model_id, cache_dir, url, device="cpu"):
         self.url = url
-        super().__init__(model_id, cache_dir)
+        super().__init__(model_id, cache_dir, device)
 
     def load(self):
         self.source_path = url_cache_path(self.cache_dir, self.model_id, self.url)
@@ -280,9 +287,9 @@ class PyfrancModel(BaseLIDModel):
 class FunLangIDModel(BaseLIDModel):
     """FUN-LangID, a single Python file at a URL that holds both the code and the model (frequent 4-grams per language)."""
 
-    def __init__(self, model_id, cache_dir, url):
+    def __init__(self, model_id, cache_dir, url, device="cpu"):
         self.url = url
-        super().__init__(model_id, cache_dir)
+        super().__init__(model_id, cache_dir, device)
 
     def load(self):
         path = url_cache_path(self.cache_dir, self.model_id, self.url)
@@ -324,17 +331,22 @@ class FunLangIDModel(BaseLIDModel):
 class ConLIDModel(BaseLIDModel):
     """ConLID: weights from a Hugging Face repository, code from the extern/ConLID git submodule."""
 
-    def __init__(self, model_id, cache_dir, revision):
+    def __init__(self, model_id, cache_dir, revision, device="cpu"):
         self.revision = revision
-        super().__init__(model_id, cache_dir)
+        super().__init__(model_id, cache_dir, device)
 
     def load(self):
         path = snapshot_download(
             self.model_id, revision=self.revision, cache_dir=self.cache_dir
         )
         conlid = runpy.run_path(f"{DEFAULT_EXTERN_DIR}/ConLID/model.py")["ConLID"]
-        self.model = conlid.from_pretrained(dir=path)
-        self.model.eval()
+        # ConLID's code loads onto "cuda", the current CUDA device, when there is one, and puts its inputs on
+        # model.device: ours is made current while loading, then set
+        cuda = self.device if self.device.startswith("cuda") else None
+        with torch.cuda.device(cuda):
+            self.model = conlid.from_pretrained(dir=path)
+        self.model.device = self.device
+        self.model.to(self.device).eval()
 
     def labels(self):
         # labels.json lists them in output order
