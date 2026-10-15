@@ -230,10 +230,10 @@ extern/asjp-software/
 
 # Analysis notebooks
 notebooks/
+img/
 
 # Pipeline docs, kept local for now
 docs/
-
 
 # Claude stuff
 CLAUDE.md
