@@ -45,6 +45,13 @@ def parse_args():
 def main():
     args = parse_args()
     seed_everything(args.seed)
+    # wandb project and entity from .env (WANDB_PROJECT, WANDB_ENTITY; see .env.example). Connecting first records the
+    # run's arguments and fails fast on a wrong project or entity, before minutes of loading the splits. A dry run
+    # logs nothing
+    logger = False
+    if not args.dry_run:
+        logger = WandbLogger(save_dir=DEFAULT_EVAL_DIR)
+        logger.experiment.config.update(vars(args))
 
     features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
     # Classes: the training glottocodes, in a fixed order
@@ -73,8 +80,7 @@ def main():
         # Dev scores four times per epoch: training is a single epoch
         val_check_interval=0.25,
         fast_dev_run=args.dry_run,
-        # wandb project and entity from .env (WANDB_PROJECT, WANDB_ENTITY; see .env.example)
-        logger=WandbLogger(save_dir=DEFAULT_EVAL_DIR),
+        logger=logger,
         callbacks=[
             ModelCheckpoint(monitor="valid_loss", mode="min", save_top_k=1),
             TQDMProgressBar(),
