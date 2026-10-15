@@ -14,6 +14,18 @@ HELDOUT_FAMILIES: Final = [
     "aust1307",
     "otom1299",
 ]
+# Glottolog's pseudo-families: top-level groups that are not genealogical (bookkeeping, unclassifiable, pidgin, mixed,
+# artificial and sign languages, speech registers, unattested). Their members are not relatives of each other
+PSEUDO_FAMILIES: Final = [
+    "book1242",
+    "uncl1493",
+    "pidg1258",
+    "mixe1287",
+    "arti1236",
+    "sign1238",
+    "spee1234",
+    "unat1236",
+]
 DEFAULT_TREE_DIR: Final = f"{DEFAULT_DATA_DIR}/trees"
 DEFAULT_REFERENCE_TREE_DIR: Final = f"{DEFAULT_TREE_DIR}/references"
 DEFAULT_REFERENCE_TREE_RAW_DIR: Final = f"{DEFAULT_REFERENCE_TREE_DIR}/raw"

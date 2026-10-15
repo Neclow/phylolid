@@ -4,13 +4,21 @@ import os
 
 from argparse import ArgumentParser
 
+import pandas as pd
+
 from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
-from src._config import DEFAULT_EVAL_DIR, DEFAULT_N_THREADS, DEFAULT_SPLIT_DIR
+from src._config import (
+    DEFAULT_DATASET_DIR,
+    DEFAULT_EVAL_DIR,
+    DEFAULT_N_THREADS,
+    DEFAULT_SPLIT_DIR,
+)
 from src.data.datasets import FeatureDataset, collate_features
+from src.data.glottolog import lineages
 from src.lid.features import Features
 from src.lid.model import LitFastText
 
@@ -22,6 +30,19 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size")
     parser.add_argument("--n-epochs", type=int, default=1, help="Training epochs")
     parser.add_argument("--dim", type=int, default=256, help="Embedding size")
+    # Phylogenetic soft labels (src/lid/model.py, soft_targets); 0: cross-entropy
+    parser.add_argument(
+        "--soft-lambda",
+        type=float,
+        default=0.0,
+        help="Share of the target the true language gives to its relatives",
+    )
+    parser.add_argument(
+        "--soft-beta",
+        type=float,
+        default=0.5,
+        help="How fast a relative's share falls with its distance in Glottolog levels",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
         "--n-threads",
@@ -67,7 +88,17 @@ def main():
         )
         for split in ["train", "dev"]
     }
-    model = LitFastText(features.size, classes, args.dim, args.lr)
+    # The classes' Glottolog lineages, from the datasets' mapping, for the soft targets
+    lineage = lineages(pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv"))
+    model = LitFastText(
+        features.size,
+        classes,
+        args.dim,
+        args.lr,
+        lam=args.soft_lambda,
+        beta=args.soft_beta,
+        lineages=[lineage[g] for g in classes],
+    )
 
     if args.device.startswith("cuda"):
         accelerator, devices = "gpu", [int(args.device.split(":")[-1])]

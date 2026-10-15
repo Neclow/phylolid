@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from src.data.datasets import FeatureDataset, collate_features
 from src.lid.features import Features
-from src.lid.model import FastText, LitFastText, Predictor
+from src.lid.model import FastText, LitFastText, Predictor, levels, soft_targets
 
 
 def write(path, text):
@@ -25,6 +25,46 @@ def test_fasttext_is_mean_then_linear():
     assert torch.allclose(logits, model.linear(mean))
 
 
+def test_levels():
+    # Sisters, a dialect below its language, and a language two branches away
+    assert levels(("f", "g", "a"), ("f", "g", "b")) == 2
+    assert levels(("f", "l"), ("f", "l", "d")) == 1
+    assert levels(("f", "g", "a"), ("f", "c")) == 3
+
+
+def test_soft_targets():
+    # Family f (a and b sisters, c further), family h, an isolate, two languages of a pseudo-family
+    lineages = [
+        ("f", "g", "a"),
+        ("f", "g", "b"),
+        ("f", "c"),
+        ("h", "d"),
+        ("e",),
+        ("arti1236", "p"),
+        ("arti1236", "q"),
+    ]
+    # lam 0: one-hot targets, i.e. cross-entropy
+    assert torch.equal(soft_targets(lineages, 0.0, 0.5), torch.eye(7))
+    targets = soft_targets(lineages, 0.1, 0.5)
+    assert torch.allclose(targets.sum(dim=1), torch.ones(7))
+    # a keeps 0.9; b (2 levels) gets more than c (3 levels), by exp(-beta * levels); other families nothing
+    weights = torch.exp(-0.5 * torch.tensor([2.0, 3.0]))
+    assert torch.allclose(
+        targets[0, :3], torch.cat([torch.tensor([0.9]), 0.1 * weights / weights.sum()])
+    )
+    assert targets[0, 3:].sum() == 0
+    # No relatives: an alone family member, an isolate, the pseudo-family's members
+    for y in [3, 4, 5, 6]:
+        assert torch.equal(targets[y], torch.eye(7)[y])
+
+
+def test_one_hot_targets_are_cross_entropy():
+    logits = torch.randn(4, 3)
+    target = torch.tensor([0, 2, 1, 2])
+    loss = torch.nn.CrossEntropyLoss()
+    assert torch.allclose(loss(logits, torch.eye(3)[target]), loss(logits, target))
+
+
 def test_training_and_prediction(tmp_path):
     # Two classes, a train and a dev split: one epoch on the CPU, scored on dev
     for split in ["train", "dev"]:
@@ -40,7 +80,15 @@ def test_training_and_prediction(tmp_path):
         )
         for split in ["train", "dev"]
     ]
-    model = LitFastText(features.size, classes, dim=4, lr=0.1)
+    # Soft labels on: the two classes are sisters
+    model = LitFastText(
+        features.size,
+        classes,
+        dim=4,
+        lr=0.1,
+        lam=0.1,
+        lineages=[("f", "abcd1234"), ("f", "efgh1234")],
+    )
     trainer = Trainer(
         accelerator="cpu",
         max_epochs=1,

@@ -1,4 +1,5 @@
-"""fastText's supervised model in PyTorch, as ConLID's cross-entropy baseline, and its Lightning training module."""
+"""fastText's supervised model in PyTorch, as ConLID's cross-entropy baseline, its phylogenetic soft labels and its
+Lightning training module."""
 
 import torch
 
@@ -6,6 +7,7 @@ from lightning.pytorch import LightningModule
 from torch import nn
 from torchmetrics import MetricCollection
 
+from src._config import PSEUDO_FAMILIES
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
 
@@ -22,13 +24,51 @@ class FastText(nn.Module):
         return self.linear(self.embedding(ids, offsets))
 
 
-class LitFastText(LightningModule):
-    """Trains FastText with cross-entropy, AdamW and a linearly decaying learning rate (ConLID's LIDCE)."""
+def levels(a, b):
+    """Glottolog levels between two lineages (family ... languoid): up from one to their lowest common ancestor, then
+    down to the other (sisters: 2)."""
+    common = 0
+    while common < min(len(a), len(b)) and a[common] == b[common]:
+        common += 1
+    return len(a) + len(b) - 2 * common
 
-    def __init__(self, n_features, classes, dim, lr):
+
+def soft_targets(lineages, lam, beta):
+    """Training target of each class (rows) over the classes: the class keeps 1 - lam, and lam goes to the other classes
+    of its family, by exp(-beta * levels between them). One-hot (cross-entropy) when lam is 0, and for a class without
+    relatives: an isolate, or a member of a pseudo-family."""
+    targets = torch.eye(len(lineages))
+    for y, lineage in enumerate(lineages):
+        relatives = [
+            c
+            for c, other in enumerate(lineages)
+            if c != y and other[0] == lineage[0] and lineage[0] not in PSEUDO_FAMILIES
+        ]
+        if lam > 0 and relatives:
+            distances = torch.tensor(
+                [float(levels(lineage, lineages[c])) for c in relatives]
+            )
+            targets[y, y] = 1 - lam
+            targets[y, relatives] = lam * torch.softmax(-beta * distances, dim=0)
+    return targets
+
+
+class LitFastText(LightningModule):
+    """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets: lam
+    0 is cross-entropy. The classes' lineages are needed for training only, to build the targets.
+    """
+
+    # Buffer of the training targets, typed as torchmetrics does
+    targets: torch.Tensor
+
+    def __init__(self, n_features, classes, dim, lr, lam=0.0, beta=0.5, lineages=None):
         super().__init__()
         # Saved with the checkpoint, classes (glottocodes in output order) included
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["lineages"])
+        if lineages is not None:
+            self.register_buffer(
+                "targets", soft_targets(lineages, lam, beta), persistent=False
+            )
         self.model = FastText(n_features, len(classes), dim)
         self.loss_fn = nn.CrossEntropyLoss()
         self.valid_metrics = MetricCollection(
@@ -40,7 +80,9 @@ class LitFastText(LightningModule):
         return self.model(ids, offsets)
 
     def training_step(self, batch, batch_idx):
-        loss = self.loss_fn(self(batch["ids"], batch["offsets"]), batch["target"])
+        # Against each class's soft target; dev scores stay against the true class, comparable across lam
+        logits = self(batch["ids"], batch["offsets"])
+        loss = self.loss_fn(logits, self.targets[batch["target"]])
         # The number of texts (Lightning would infer it from the ids)
         self.log("train_loss", loss, batch_size=len(batch["target"]))
         return loss
