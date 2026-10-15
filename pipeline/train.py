@@ -43,12 +43,12 @@ def parse_args():
         default=0.5,
         help="How fast a relative's share falls with its distance in Glottolog levels",
     )
-    # Tree losses on the embeddings (src/lid/tree_losses.py); 0: off
+    # Losses on the embeddings against the Glottolog tree (src/lid/tree_losses.py), after phylogeny-guided-lid; 0: off
     parser.add_argument(
-        "--tree-weight",
+        "--patristic-weight",
         type=float,
         default=0.0,
-        help="Weight of 1 - correlation between class-centroid and tree distances",
+        help="Weight of 1 - correlation between class-centroid distances and patristic (tree path) distances",
     )
     parser.add_argument(
         "--quartet-weight",
@@ -110,7 +110,7 @@ def main():
         args.lr,
         lam=args.soft_lambda,
         beta=args.soft_beta,
-        tree_weight=args.tree_weight,
+        patristic_weight=args.patristic_weight,
         quartet_weight=args.quartet_weight,
         lineages=[lineage[g] for g in classes],
     )

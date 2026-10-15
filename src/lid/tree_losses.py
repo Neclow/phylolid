@@ -19,7 +19,8 @@ class TreeLosses(nn.Module):
     """Two losses on per-class centroids of the sentence embeddings, against tree distances within families (NaN
     elsewhere, src/lid/tree.py):
 
-    - tree: 1 - Pearson correlation between the centroids' distances and the tree distances, over related pairs;
+    - patristic: 1 - Pearson correlation between the centroids' distances and the patristic (tree path) distances, over
+      related pairs;
     - quartet (Phyla): for four related classes, cross-entropy of the three pairings, scored by the centroids'
       distances, against the pairing the tree implies (four-point condition).
 
@@ -51,7 +52,7 @@ class TreeLosses(nn.Module):
         self.register_buffer("seen", torch.zeros(n, dtype=torch.bool), persistent=False)
 
     def forward(self, embeddings, targets):
-        """Tree and quartet losses of a batch of sentence embeddings (B, dim) with their classes (B,)."""
+        """Patristic and quartet losses of a batch of sentence embeddings (B, dim) with their classes (B,)."""
         n = len(self.distances)
         sums = embeddings.new_zeros(n, embeddings.size(1)).index_add(
             0, targets, embeddings
@@ -77,9 +78,9 @@ class TreeLosses(nn.Module):
         products = centroids @ centroids.T
         squared = squares.unsqueeze(1) + squares.unsqueeze(0) - 2 * products
         embedded = torch.sqrt(squared.clamp(min=0) + 1e-8)
-        return self.tree_loss(embedded), self.quartet_loss(embedded, present)
+        return self.patristic_loss(embedded), self.quartet_loss(embedded, present)
 
-    def tree_loss(self, embedded):
+    def patristic_loss(self, embedded):
         i, j = self.pairs
         known = self.seen[i] & self.seen[j]
         # Correlation is undefined over fewer than three pairs

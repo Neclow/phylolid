@@ -43,7 +43,7 @@ def soft_targets(lineages, lam, beta):
 
 class LitFastText(LightningModule):
     """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets (lam
-    0: cross-entropy), plus tree_weight and quartet_weight times the TreeLosses of the sentence embeddings. The
+    0: cross-entropy), plus patristic_weight and quartet_weight times the TreeLosses of the sentence embeddings. The
     classes' lineages are needed for training only.
     """
 
@@ -59,7 +59,7 @@ class LitFastText(LightningModule):
         lr,
         lam=0.0,
         beta=0.5,
-        tree_weight=0.0,
+        patristic_weight=0.0,
         quartet_weight=0.0,
         lineages=None,
     ):
@@ -86,14 +86,14 @@ class LitFastText(LightningModule):
         # Against each class's soft target; dev scores stay against the true class, comparable across lam
         ce = self.loss_fn(self.model.linear(embeddings), self.targets[batch["target"]])
         weights = {
-            "tree": self.hparams["tree_weight"],
+            "patristic": self.hparams["patristic_weight"],
             "quartet": self.hparams["quartet_weight"],
         }
         # Always computed, as a measure of how tree-like the embeddings are; with a gradient only when weighted
         with torch.set_grad_enabled(any(weights.values())):
-            tree, quartet = self.tree_losses(embeddings, batch["target"])
+            patristic, quartet = self.tree_losses(embeddings, batch["target"])
         loss = ce
-        for name, value in {"tree": tree, "quartet": quartet}.items():
+        for name, value in {"patristic": patristic, "quartet": quartet}.items():
             if weights[name]:
                 loss = loss + weights[name] * value
         # The number of texts (Lightning would infer it from the ids)
@@ -102,7 +102,7 @@ class LitFastText(LightningModule):
             {
                 "train_loss": loss,
                 "train_ce_loss": ce,
-                "train_tree_loss": tree,
+                "train_patristic_loss": patristic,
                 "train_quartet_loss": quartet,
             },
             batch_size=n,
