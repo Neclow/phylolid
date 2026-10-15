@@ -311,10 +311,11 @@ def main():
     output_dir = f"{DEFAULT_EVAL_DIR}/{kind}/{name}"
     if os.path.exists(output_dir):
         raise SystemExit(f"{output_dir} exists: move or remove it first")
-    # To the terminal and to a log file per model
+    # To the terminal and to a log file per model; force: an imported library already set up logging
     os.makedirs(f"{DEFAULT_EVAL_DIR}/logs", exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
+        force=True,
         format="%(asctime)s %(message)s",
         handlers=[
             logging.StreamHandler(),
