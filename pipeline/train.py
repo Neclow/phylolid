@@ -43,6 +43,19 @@ def parse_args():
         default=0.5,
         help="How fast a relative's share falls with its distance in Glottolog levels",
     )
+    # Tree losses on the embeddings (src/lid/tree_losses.py); 0: off
+    parser.add_argument(
+        "--tree-weight",
+        type=float,
+        default=0.0,
+        help="Weight of 1 - correlation between class-centroid and tree distances",
+    )
+    parser.add_argument(
+        "--quartet-weight",
+        type=float,
+        default=0.0,
+        help="Weight of the quartet loss on class centroids",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
         "--n-threads",
@@ -97,6 +110,8 @@ def main():
         args.lr,
         lam=args.soft_lambda,
         beta=args.soft_beta,
+        tree_weight=args.tree_weight,
+        quartet_weight=args.quartet_weight,
         lineages=[lineage[g] for g in classes],
     )
 

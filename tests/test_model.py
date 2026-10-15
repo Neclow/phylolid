@@ -80,6 +80,8 @@ def test_training_and_prediction(tmp_path):
         dim=4,
         lr=0.1,
         lam=0.1,
+        tree_weight=0.1,
+        quartet_weight=0.1,
         lineages=[("f", "abcd1234"), ("f", "efgh1234")],
     )
     trainer = Trainer(

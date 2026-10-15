@@ -1,4 +1,4 @@
-"""fastText's supervised model in PyTorch, as ConLID's cross-entropy baseline, its phylogenetic soft labels and its
+"""fastText's supervised model in PyTorch, as ConLID's cross-entropy baseline, its phylogenetic losses and its
 Lightning training module."""
 
 import torch
@@ -10,6 +10,7 @@ from torchmetrics import MetricCollection
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
 from src.lid.tree import tree_distances
+from src.lid.tree_losses import TreeLosses
 
 
 class FastText(nn.Module):
@@ -41,14 +42,27 @@ def soft_targets(lineages, lam, beta):
 
 
 class LitFastText(LightningModule):
-    """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets: lam
-    0 is cross-entropy. The classes' lineages are needed for training only, to build the targets.
+    """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets (lam
+    0: cross-entropy), plus tree_weight and quartet_weight times the TreeLosses of the sentence embeddings. The
+    classes' lineages are needed for training only.
     """
 
-    # Buffer of the training targets, typed as torchmetrics does
+    # Buffer of the training targets, typed as torchmetrics does, and the tree losses (training only)
     targets: torch.Tensor
+    tree_losses: TreeLosses
 
-    def __init__(self, n_features, classes, dim, lr, lam=0.0, beta=0.5, lineages=None):
+    def __init__(
+        self,
+        n_features,
+        classes,
+        dim,
+        lr,
+        lam=0.0,
+        beta=0.5,
+        tree_weight=0.0,
+        quartet_weight=0.0,
+        lineages=None,
+    ):
         super().__init__()
         # Saved with the checkpoint, classes (glottocodes in output order) included
         self.save_hyperparameters(ignore=["lineages"])
@@ -56,6 +70,7 @@ class LitFastText(LightningModule):
             self.register_buffer(
                 "targets", soft_targets(lineages, lam, beta), persistent=False
             )
+            self.tree_losses = TreeLosses(tree_distances(lineages), dim)
         self.model = FastText(n_features, len(classes), dim)
         self.loss_fn = nn.CrossEntropyLoss()
         self.valid_metrics = MetricCollection(
@@ -67,11 +82,31 @@ class LitFastText(LightningModule):
         return self.model(ids, offsets)
 
     def training_step(self, batch, batch_idx):
+        embeddings = self.model.embedding(batch["ids"], batch["offsets"])
         # Against each class's soft target; dev scores stay against the true class, comparable across lam
-        logits = self(batch["ids"], batch["offsets"])
-        loss = self.loss_fn(logits, self.targets[batch["target"]])
+        ce = self.loss_fn(self.model.linear(embeddings), self.targets[batch["target"]])
+        weights = {
+            "tree": self.hparams["tree_weight"],
+            "quartet": self.hparams["quartet_weight"],
+        }
+        # Always computed, as a measure of how tree-like the embeddings are; with a gradient only when weighted
+        with torch.set_grad_enabled(any(weights.values())):
+            tree, quartet = self.tree_losses(embeddings, batch["target"])
+        loss = ce
+        for name, value in {"tree": tree, "quartet": quartet}.items():
+            if weights[name]:
+                loss = loss + weights[name] * value
         # The number of texts (Lightning would infer it from the ids)
-        self.log("train_loss", loss, batch_size=len(batch["target"]))
+        n = len(batch["target"])
+        self.log_dict(
+            {
+                "train_loss": loss,
+                "train_ce_loss": ce,
+                "train_tree_loss": tree,
+                "train_quartet_loss": quartet,
+            },
+            batch_size=n,
+        )
         return loss
 
     def validation_step(self, batch, batch_idx):
