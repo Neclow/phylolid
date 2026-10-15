@@ -14,11 +14,16 @@ def test_text_dataset(tmp_path):
     write(tmp_path / "test" / "abcd1234" / "abc_Latn_cbc.txt", "one\ntwo\n")
     write(tmp_path / "test" / "abcd1234" / "abc_Latn_omnilingual.txt", "three\n")
     # A Unicode line separator inside a sentence stays in it
-    write(tmp_path / "test" / "efgh1234" / "efg_Latn_pbc.txt", "four four\n")
+    write(tmp_path / "test" / "efgh1234" / "efg_Latn_pbc.txt", "four\u2028four\n")
     write(tmp_path / "heldout" / "ijkl1234" / "ijk_Latn_jw.txt", "five\n")
     dataset = TextDataset("test", split_dir=tmp_path)
     assert len(dataset) == 4
-    assert [item["text"] for item in dataset] == ["one", "two", "three", "four four"]
+    assert [item["text"] for item in dataset] == [
+        "one",
+        "two",
+        "three",
+        "four\u2028four",
+    ]
     assert dataset[2] == {
         "text": "three",
         "glottocode": "abcd1234",
