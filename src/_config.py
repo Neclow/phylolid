@@ -31,3 +31,5 @@ DEFAULT_EVAL_DIR: Final = f"{DEFAULT_DATA_DIR}/eval"
 NON_LANGUAGE_GLOTTOCODE: Final = "zxxx0000"
 
 DEFAULT_EXTERN_DIR: Final = "extern"
+# CPU processes for parallel work (the machine is shared)
+DEFAULT_N_THREADS: Final = 16

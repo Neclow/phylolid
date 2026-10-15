@@ -17,6 +17,7 @@ from src._config import (
     DEFAULT_CACHE_DIR,
     DEFAULT_DATASET_DIR,
     DEFAULT_EXTERN_DIR,
+    DEFAULT_N_THREADS,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
     DEFAULT_SPLIT_DIR,
     GLOTLIDC_MODELS,
@@ -198,7 +199,7 @@ def parse_args():
     parser.add_argument(
         "--workers",
         type=int,
-        default=8,
+        default=DEFAULT_N_THREADS,
         help="Classes split in parallel; each worker holds a whole class in memory (Russian: 9.2M lines)",
     )
     return parser.parse_args()
