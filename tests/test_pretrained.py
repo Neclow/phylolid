@@ -158,6 +158,40 @@ def test_pyfranc_predict_scores():
     assert labels[scores[2].argmax()] == "jpn" and (scores[2] > 0).sum() == 1
 
 
+def test_pyfranc_scripts():
+    scripts = PyfrancModel("cyb3rk0tik/pyfranc", "unused").scripts()
+    # Profiles in two scripts, a script of its own, both, a Unicode script name (Canadian_Aboriginal)
+    assert scripts["uig"] == {"Arab", "Latn"}
+    assert scripts["blt"] == {"Tavt"}
+    assert scripts["jav"] == {"Java", "Latn"}
+    assert scripts["ike"] == {"Cans"}
+    # franc's Japanese is kana
+    assert scripts["jpn"] == {"Hira"}
+    assert "und" not in scripts
+
+
+def test_fun_langid_scripts(tmp_path):
+    (tmp_path / "google-research--fun_langid").mkdir()
+    (tmp_path / "google-research--fun_langid" / "fun_langid.py").write_text(
+        """
+class FunLangID:
+    lex_dict = {"abcd": ("aaa",), "где": ("bbb",), ", ka": ("aaa", "bbb"), "日": ("ccc",)}
+""",
+        encoding="utf-8",
+    )
+    model = FunLangIDModel(
+        "google-research/fun_langid",
+        str(tmp_path),
+        url="https://example.org/fun_langid.py",
+    )
+    # Scripts of its n-grams' characters; punctuation and spaces belong to none
+    assert model.scripts() == {
+        "aaa": {"Latn"},
+        "bbb": {"Cyrl", "Latn"},
+        "ccc": {"Hani"},
+    }
+
+
 def test_fun_langid_predict_scores(tmp_path):
     # A stand-in for fun_langid.py with the same interface, where the wrapper caches it: nothing is downloaded
     (tmp_path / "google-research--fun_langid").mkdir()

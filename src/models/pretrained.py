@@ -13,6 +13,7 @@ import regex
 import requests
 import torch
 
+from fontTools.unicodedata import script, script_code
 from huggingface_hub import hf_hub_download, snapshot_download
 from pyfranc import franc
 from pyfranc.data import data as franc_profiles
@@ -20,6 +21,10 @@ from pyfranc.expressions import expressions as franc_expressions
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from src._config import DEFAULT_EXTERN_DIR
+
+# ISO 15924 codes of characters that no one script owns: Common (spaces, digits, punctuation), Inherited (combining
+# marks), Unknown
+SHARED_SCRIPTS = {"Zyyy", "Zinh", "Zzzz"}
 
 
 def url_cache_path(cache_dir, model_id, url):
@@ -68,6 +73,10 @@ class BaseLIDModel(ABC):
             self, "decision_function"
         )
         return top_labels(scores(texts), self.labels())
+
+    def scripts(self):
+        """Label -> the ISO 15924 scripts the model can return it for, when the model's own data tells: none here."""
+        return {}
 
     @staticmethod
     def preprocess(text):
@@ -243,6 +252,20 @@ class PyfrancModel(BaseLIDModel):
         # und: text too short, or in no known script
         return sorted(profiled | script_only | {"und"})
 
+    def scripts(self):
+        # franc scores a text against the profiles of its main script only: a language is returned for the scripts of
+        # its profiles (Unicode script names) and of its own expression (one Unicode script, which its first character
+        # tells; jav has both)
+        scripts = {}
+        for name, languages in franc_profiles.items():
+            for language in languages:
+                scripts.setdefault(language, set()).add(script_code(name))
+        for language, expression in franc_expressions.items():
+            if language not in franc_profiles:
+                first = chr(int(re.findall(r"\\u([0-9A-F]{4})", expression)[0], 16))
+                scripts.setdefault(language, set()).add(script(first))
+        return scripts
+
     def decision_function(self, texts):
         # Not probabilities: 1 - the normalised trigram distance, 1 for the closest language. franc scores the languages
         # of the text's script, with its defaults (und under 10 characters); 0 for the others
@@ -276,6 +299,14 @@ class FunLangIDModel(BaseLIDModel):
                 for language in languages
             }
         )
+
+    def scripts(self):
+        # A language scores only through its lexicon's 1- to 4-grams: it is returned for their scripts
+        scripts = {}
+        for gram, languages in self.model.lex_dict.items():
+            for language in languages:
+                scripts.setdefault(language, set()).update(map(script, gram))
+        return {language: found - SHARED_SCRIPTS for language, found in scripts.items()}
 
     def decision_function(self, texts):
         # Not probabilities: the share of the text's 4-grams frequent in each language, for every language some 4-gram
