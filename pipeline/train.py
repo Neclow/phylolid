@@ -4,6 +4,7 @@ import os
 
 from argparse import ArgumentParser
 
+import numpy as np
 import pandas as pd
 
 from lightning.pytorch import Trainer, seed_everything
@@ -22,7 +23,7 @@ from src.data.datasets import FeatureDataset, collate_features
 from src.data.glottolog import lineages
 from src.lid.features import Features
 from src.lid.model import LitFastText
-from src.lid.tree import newick, shuffle_classes
+from src.lid.tree import huffman_lineages, newick, shuffle_classes
 
 
 def parse_args():
@@ -65,9 +66,20 @@ def parse_args():
         help="Weight of the phylo-nn heads predicting each sentence's Glottolog family (H0) and H3 ancestor (0: they only probe)",
     )
     parser.add_argument(
+        "--tree-softmax",
+        action="store_true",
+        help="Output layer: choices down the tree (--tree) instead of one softmax over the classes",
+    )
+    parser.add_argument(
+        "--tree",
+        choices=["glottolog", "huffman"],
+        default="glottolog",
+        help="Tree of the phylogenetic methods: Glottolog's, or fastText's Huffman tree over the training sentences per class (no linguistic information)",
+    )
+    parser.add_argument(
         "--shuffle-tree",
         action="store_true",
-        help="Control: the classes shuffled over their places in the Glottolog tree (with --seed), its shape kept",
+        help="Control: the classes shuffled over their places in the tree (with --seed), its shape kept",
     )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
@@ -86,7 +98,11 @@ def parse_args():
         action="store_true",
         help="One training and one dev batch, to test the pipeline",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
+    if args.phylonn_weight and args.tree == "huffman":
+        parser.error("--phylonn-weight needs --tree glottolog")
+    return args
 
 
 def main():
@@ -103,9 +119,12 @@ def main():
     features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
     # Classes: the training glottocodes, in a fixed order
     classes = sorted(os.listdir(f"{DEFAULT_SPLIT_DIR}/train"))
+    datasets = {
+        split: FeatureDataset(split, classes, features) for split in ["train", "dev"]
+    }
     loaders = {
         split: DataLoader(
-            FeatureDataset(split, classes, features),
+            datasets[split],
             batch_size=args.batch_size,
             shuffle=split == "train",
             num_workers=args.n_threads,
@@ -114,9 +133,13 @@ def main():
         )
         for split in ["train", "dev"]
     }
-    # The classes' Glottolog lineages, from the datasets' mapping
-    lineage = lineages(pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv"))
-    class_lineages = [lineage[g] for g in classes]
+    # The tree as the classes' lineages: Glottolog's, from the datasets' mapping, or a Huffman tree
+    if args.tree == "glottolog":
+        lineage = lineages(pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv"))
+        class_lineages = [lineage[g] for g in classes]
+    else:
+        counts = np.bincount(datasets["train"].targets, minlength=len(classes))
+        class_lineages = huffman_lineages(classes, counts, args.seed)
     if args.shuffle_tree:
         class_lineages = shuffle_classes(class_lineages, args.seed)
     # The tree the run trains with, in its folder next to its checkpoints (<project>/<run>)
@@ -135,6 +158,7 @@ def main():
         patristic_weight=args.patristic_weight,
         quartet_weight=args.quartet_weight,
         phylonn_weight=args.phylonn_weight,
+        tree_softmax=args.tree_softmax,
         lineages=class_lineages,
     )
 
