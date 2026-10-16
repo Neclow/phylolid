@@ -17,7 +17,6 @@ train_test_heldout_split = "python -m pipeline.train_test_heldout_split"
 evaluate = "python -m pipeline.evaluate"
 build_vocab = "python -m pipeline.build_vocab"
 train = "python -m pipeline.train"
-list_runs = "python -m pipeline.list_runs"
 test = "python -m pytest tests"
 
 [dependencies]
@@ -46,7 +45,6 @@ cxx-compiler = "*"
 libprotobuf = ">=6.33.5,<7"
 pybind11 = ">=3.1.0,<4"
 setuptools = ">=84.0.0,<85"
-pyyaml = ">=6.0.3,<7"
 
 [pypi-dependencies]
 pyglottolog = ">=4.0.1, <5"
