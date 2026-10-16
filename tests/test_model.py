@@ -1,5 +1,6 @@
 """Unit tests for the fastText-style model in src/lid/model.py."""
 
+import pytest
 import torch
 
 from lightning.pytorch import Trainer
@@ -7,7 +8,8 @@ from torch.utils.data import DataLoader
 
 from src.data.datasets import FeatureDataset, collate_features
 from src.lid.features import Features
-from src.lid.model import FastText, LitFastText, Predictor, soft_targets
+from src.lid.model import FastText, LitFastText, Predictor, TreeSoftmax, soft_targets
+from src.lid.tree import tree_softmax_layout
 
 
 def write(path, text):
@@ -58,7 +60,23 @@ def test_one_hot_targets_are_cross_entropy():
     assert torch.allclose(loss(logits, torch.eye(3)[target]), loss(logits, target))
 
 
-def test_training_and_prediction(tmp_path):
+def test_tree_softmax():
+    # Family f (a and b sisters, c further), an isolate e
+    layout, groups = tree_softmax_layout(
+        [("f", "g", "a"), ("f", "g", "b"), ("f", "c"), ("e",)]
+    )
+    model = TreeSoftmax(4, layout, groups)
+    embeddings = torch.randn(3, 4)
+    log_probs = model(embeddings)
+    assert torch.allclose(log_probs.exp().sum(dim=1), torch.ones(3))
+    # a: f among the root's children, g among f's, a among g's (the first unit of each group)
+    scores = model.linear(embeddings)
+    choices = [scores[:, groups == group].softmax(dim=1)[:, 0] for group in range(3)]
+    assert torch.allclose(log_probs[:, 0].exp(), choices[0] * choices[1] * choices[2])
+
+
+@pytest.mark.parametrize("tree_softmax", [False, True])
+def test_training_and_prediction(tmp_path, tree_softmax):
     # Two classes, a train and a dev split: one epoch on the CPU, scored on dev
     for split in ["train", "dev"]:
         write(tmp_path / split / "abcd1234" / "abc_Latn_cbc.txt", "the cat\nthe dog\n")
@@ -83,6 +101,7 @@ def test_training_and_prediction(tmp_path):
         patristic_weight=0.1,
         quartet_weight=0.1,
         phylonn_weight=0.1,
+        tree_softmax=tree_softmax,
         lineages=[("f", "abcd1234"), ("f", "efgh1234")],
     )
     trainer = Trainer(

@@ -9,17 +9,45 @@ from torchmetrics import MetricCollection
 
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
-from src.lid.tree import IGNORE, level_labels, tree_distances
+from src.lid.tree import IGNORE, level_labels, tree_distances, tree_softmax_layout
 from src.lid.tree_losses import TreeLosses
 
 
-class FastText(nn.Module):
-    """Mean of a text's feature embeddings, then a linear layer over the classes."""
+class TreeSoftmax(nn.Module):
+    """Output layer whose class scores are log-probabilities of choices down a tree (hierarchical softmax; fastText's
+    hs on a binary tree): one score per unit of the layout (src/lid/tree.py, tree_softmax_layout), a softmax among
+    each unit's siblings, and a class's log-probability the sum along its path from the root. They sum to 1 over the
+    classes, so cross-entropy and softmax treat them as logits."""
 
-    def __init__(self, n_features, n_classes, dim):
+    # The layout, saved with the checkpoint
+    layout: torch.Tensor
+    groups: torch.Tensor
+
+    def __init__(self, dim, layout, groups):
+        super().__init__()
+        self.linear = nn.Linear(dim, layout.shape[1])
+        self.register_buffer("layout", layout)
+        self.register_buffer("groups", groups)
+
+    def forward(self, embeddings):
+        scores = self.linear(embeddings)
+        groups = self.groups.expand_as(scores)
+        # Log-softmax among siblings, from each group's maximum for stability; there are fewer groups than units
+        top = torch.full_like(scores, float("-inf")).scatter_reduce(
+            1, groups, scores.detach(), "amax"
+        )
+        scores = scores - top.gather(1, groups)
+        total = torch.zeros_like(scores).scatter_add(1, groups, scores.exp())
+        return (scores - total.log().gather(1, groups)) @ self.layout.T
+
+
+class FastText(nn.Module):
+    """Mean of a text's feature embeddings, then a linear layer over the classes, or another output layer."""
+
+    def __init__(self, n_features, n_classes, dim, output=None):
         super().__init__()
         self.embedding = nn.EmbeddingBag(n_features, dim, mode="mean")
-        self.linear = nn.Linear(dim, n_classes)
+        self.linear = nn.Linear(dim, n_classes) if output is None else output
 
     def forward(self, ids, offsets):
         return self.linear(self.embedding(ids, offsets))
@@ -57,7 +85,7 @@ class LitFastText(LightningModule):
     """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets (lam
     0: cross-entropy), plus patristic_weight and quartet_weight times the TreeLosses of the sentence embeddings, plus
     phylonn_weight times the phylo-nn heads, which predict each sentence's Glottolog groups at PHYLONN_LEVELS from its
-    embedding.
+    embedding. With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree.
     The classes' lineages are needed for training only.
     """
 
@@ -78,6 +106,8 @@ class LitFastText(LightningModule):
         quartet_weight=0.0,
         phylonn_weight=0.0,
         phylonn_sizes=None,
+        tree_softmax=False,
+        tree_softmax_units=0,
         lineages=None,
     ):
         super().__init__()
@@ -85,6 +115,16 @@ class LitFastText(LightningModule):
             labels = [level_labels(lineages, level) for level in PHYLONN_LEVELS]
             # Numbers of groups per level: the heads' sizes, saved so that a checkpoint loads without lineages
             phylonn_sizes = [max(max(level), 0) + 1 for level in labels]
+        output = None
+        if tree_softmax:
+            # The layout from the lineages, or zeros of its saved size, which the checkpoint fills
+            if lineages is not None:
+                layout, groups = tree_softmax_layout(lineages)
+                tree_softmax_units = len(groups)
+            else:
+                layout = torch.zeros(len(classes), tree_softmax_units)
+                groups = torch.zeros(tree_softmax_units, dtype=torch.long)
+            output = TreeSoftmax(dim, layout, groups)
         # Saved with the checkpoint, classes (glottocodes in output order) included
         self.save_hyperparameters(ignore=["lineages"])
         if phylonn_sizes is not None:
@@ -99,7 +139,7 @@ class LitFastText(LightningModule):
                 "targets", soft_targets(lineages, lam, beta), persistent=False
             )
             self.tree_losses = TreeLosses(tree_distances(lineages), dim)
-        self.model = FastText(n_features, len(classes), dim)
+        self.model = FastText(n_features, len(classes), dim, output)
         self.loss_fn = nn.CrossEntropyLoss()
         self.valid_metrics = MetricCollection(
             [KnownAccuracy(len(classes)), KnownMacroF1(len(classes))],
