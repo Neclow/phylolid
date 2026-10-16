@@ -113,6 +113,15 @@ def test_training_and_prediction(tmp_path, tree_softmax):
         enable_model_summary=False,
     )
     trainer.fit(model, train, dev)
+    # One step per batch: SparseAdam for the embedding table, AdamW for the rest, both down to a learning rate of 0
+    assert trainer.global_step == len(train)
+    sparse, dense = trainer.optimizers
+    assert isinstance(sparse, torch.optim.SparseAdam)
+    assert isinstance(dense, torch.optim.AdamW)
+    assert sparse.param_groups[0]["params"] == [model.model.embedding.weight]
+    assert [o.param_groups[0]["lr"] for o in trainer.optimizers] == pytest.approx(
+        [0, 0]
+    )
     assert {"valid_loss", "valid_KnownAccuracy", "valid_KnownMacroF1"} <= set(
         trainer.callback_metrics
     )

@@ -42,11 +42,13 @@ class TreeSoftmax(nn.Module):
 
 
 class FastText(nn.Module):
-    """Mean of a text's feature embeddings, then a linear layer over the classes, or another output layer."""
+    """Mean of a text's feature embeddings, then a linear layer over the classes, or another output layer. The
+    embeddings' gradients are sparse: only the rows of a batch's features, as fastText updates them.
+    """
 
     def __init__(self, n_features, n_classes, dim, output=None):
         super().__init__()
-        self.embedding = nn.EmbeddingBag(n_features, dim, mode="mean")
+        self.embedding = nn.EmbeddingBag(n_features, dim, mode="mean", sparse=True)
         self.linear = nn.Linear(dim, n_classes) if output is None else output
 
     def forward(self, ids, offsets):
@@ -82,10 +84,11 @@ def masked_cross_entropy(logits, labels):
 
 
 class LitFastText(LightningModule):
-    """Trains FastText with AdamW and a linearly decaying learning rate (ConLID's LIDCE), against soft_targets (lam
-    0: cross-entropy), plus patristic_weight and quartet_weight times the TreeLosses of the sentence embeddings, plus
-    phylonn_weight times the phylo-nn heads, which predict each sentence's Glottolog groups at PHYLONN_LEVELS from its
-    embedding. With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree.
+    """Trains FastText with Adam (SparseAdam for the embedding table) and a linearly decaying learning rate (ConLID's
+    LIDCE, there with dense AdamW), against soft_targets (lam 0: cross-entropy), plus patristic_weight and
+    quartet_weight times the TreeLosses of the sentence embeddings, plus phylonn_weight times the phylo-nn heads, which
+    predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With tree_softmax, the output layer
+    is a TreeSoftmax over the lineages' tree.
     The classes' lineages are needed for training only.
     """
 
@@ -111,6 +114,8 @@ class LitFastText(LightningModule):
         lineages=None,
     ):
         super().__init__()
+        # Two optimizers (configure_optimizers), stepped in training_step
+        self.automatic_optimization = False
         if lineages is not None:
             labels = [level_labels(lineages, level) for level in PHYLONN_LEVELS]
             # Numbers of groups per level: the heads' sizes, saved so that a checkpoint loads without lineages
@@ -193,7 +198,18 @@ class LitFastText(LightningModule):
             batch_size=n,
         )
         # train_loss is the model's objective; the probes train on their own
-        return loss + probes
+        optimizers, schedulers = self.optimizers(), self.lr_schedulers()
+        # Lists: configure_optimizers returns two of each
+        assert isinstance(optimizers, list) and isinstance(schedulers, list)
+        sparse, dense = optimizers
+        sparse.zero_grad()
+        dense.zero_grad()
+        self.manual_backward(loss + probes)
+        # The sparse optimizer steps on its own, so that Lightning counts one step per batch (global_step)
+        sparse.optimizer.step()
+        dense.step()
+        for scheduler in schedulers:
+            scheduler.step()
 
     def validation_step(self, batch, batch_idx):
         logits = self(batch["ids"], batch["offsets"])
@@ -204,24 +220,31 @@ class LitFastText(LightningModule):
         self.log_dict(self.valid_metrics, batch_size=len(batch["target"]))
 
     def configure_optimizers(self):
-        # ConLID's settings (appendix B.2): no weight decay, the learning rate falls linearly to 0 over training
-        optimizer = torch.optim.AdamW(
-            self.parameters(),
-            lr=self.hparams["lr"],
-            betas=(0.9, 0.999),
-            eps=1e-6,
-            weight_decay=0,
-        )
-        scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=1.0,
-            end_factor=0.0,
-            total_iters=int(self.trainer.estimated_stepping_batches),
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
-        }
+        # ConLID's settings (appendix B.2): AdamW without weight decay, the learning rate falls linearly to 0 over
+        # training. The embedding table, whose gradients are sparse, takes SparseAdam, which updates only the rows a
+        # batch touches; without weight decay, AdamW is Adam, and SparseAdam its sparse form
+        lr, betas, eps = self.hparams["lr"], (0.9, 0.999), 1e-6
+        embedding = self.model.embedding.weight
+        optimizers = [
+            torch.optim.SparseAdam([embedding], lr=lr, betas=betas, eps=eps),
+            torch.optim.AdamW(
+                [p for p in self.parameters() if p is not embedding],
+                lr=lr,
+                betas=betas,
+                eps=eps,
+                weight_decay=0,
+            ),
+        ]
+        schedulers = [
+            torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1.0,
+                end_factor=0.0,
+                total_iters=int(self.trainer.estimated_stepping_batches),
+            )
+            for optimizer in optimizers
+        ]
+        return optimizers, schedulers
 
 
 class Predictor:
