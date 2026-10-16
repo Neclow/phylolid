@@ -1,8 +1,30 @@
 """Unit tests for the Glottolog tree distances in src/lid/tree.py."""
 
+from itertools import permutations
+
 import torch
 
-from src.lid.tree import IGNORE, level_labels, levels, tree_distances
+from ete4 import Tree
+
+from src.lid.tree import (
+    IGNORE,
+    level_labels,
+    levels,
+    newick,
+    shuffle_classes,
+    tree_distances,
+)
+
+# Sisters a and b, a language l above its dialect d, an isolate e, two members of a pseudo-family
+LINEAGES = [
+    ("f", "g", "a"),
+    ("f", "g", "b"),
+    ("f", "l"),
+    ("f", "l", "d"),
+    ("e",),
+    ("arti1236", "p"),
+    ("arti1236", "q"),
+]
 
 
 def test_levels():
@@ -44,3 +66,28 @@ def test_level_labels():
     ]
     assert level_labels(lineages, 0) == [0, 0, 0, 0, 1, IGNORE]
     assert level_labels(lineages, 3) == [0, 0, 1, 2, 3, IGNORE]
+
+
+def test_shuffle_classes_keeps_the_tree():
+    shuffled = shuffle_classes(LINEAGES, seed=1)
+    assert shuffled != LINEAGES
+    # Each class keeps its name; the pseudo-family's members keep their lineages
+    assert [lineage[-1] for lineage in shuffled] == [
+        lineage[-1] for lineage in LINEAGES
+    ]
+    assert shuffled[5:] == LINEAGES[5:]
+    # The same tree with the five real classes permuted: the distances between their new places are the true ones
+    true = tree_distances(LINEAGES)[:5, :5]
+    new = tree_distances(shuffled)[:5, :5]
+    assert any(
+        torch.equal(new.nan_to_num(-1), true[p][:, p].nan_to_num(-1))
+        for p in map(list, permutations(range(5)))
+    )
+
+
+def test_newick():
+    lines = newick(LINEAGES).split("\n")
+    # One tree per real family, the language l above its dialect d; the pseudo-family left out
+    assert lines == ["((a,b)g,(d)l)f;", "e;"]
+    names = [node.name for line in lines for node in Tree(line, parser=1).traverse()]
+    assert sorted(names) == ["a", "b", "d", "e", "f", "g", "l"]
