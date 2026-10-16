@@ -1,5 +1,6 @@
-"""Distances and groups of language classes in the Glottolog tree, for the phylogenetic training losses."""
+"""Trees over the language classes (Glottolog's, or fastText's Huffman tree) and what the training methods take from them."""
 
+import heapq
 import random
 
 import torch
@@ -10,6 +11,8 @@ from src._config import PSEUDO_FAMILIES
 
 # Label of a class a hierarchy head ignores (CrossEntropyLoss's default ignore_index)
 IGNORE = -100
+# Tree softmax: the child through which a class with another class below it is chosen (a language above its dialect)
+STOP = "<stop>"
 
 
 def levels(a, b):
@@ -90,3 +93,58 @@ def newick(lineages):
         for path, node in nodes.items()
         if len(path) == 1
     )
+
+
+def huffman_lineages(classes, counts, seed):
+    """Lineages of the binary Huffman tree fastText's hierarchical softmax builds from the label counts (src/loss.cc):
+    the two least frequent nodes merge until one is left, so frequent classes sit near the root. Ties are broken at
+    random (seed), as fastText's order of tied labels is arbitrary; the classes' alphabetical order would group
+    related glottocodes. Internal nodes are named huffman<i>, the root huffman0."""
+    rng = random.Random(seed)
+    heap = [(count, rng.random(), name) for name, count in zip(classes, counts)]
+    heapq.heapify(heap)
+    parent = {}
+    while len(heap) > 1:
+        (count_a, _, a), (count_b, _, b) = heapq.heappop(heap), heapq.heappop(heap)
+        # Nodes left after the merge, so each name is used once
+        node = f"huffman{len(heap)}"
+        parent[a] = parent[b] = node
+        heapq.heappush(heap, (count_a + count_b, rng.random(), node))
+    lineages = []
+    for name in classes:
+        path = [name]
+        while path[-1] in parent:
+            path.append(parent[path[-1]])
+        lineages.append(tuple(reversed(path)))
+    return lineages
+
+
+def tree_softmax_layout(lineages):
+    """The tree softmax's layout (src/lid/model.py, TreeSoftmax) over the lineages' tree: its units, the nodes that
+    have siblings (an only child is chosen with probability 1, so it needs no score), as a (classes, units) matrix
+    with 1 where a unit is on a class's path from the root, and each unit's sibling group. The families hang from one
+    root, and so do the pseudo-families' members, as they are not genealogical groups; a class with another class
+    below it is reached through a STOP child, so that every class is a leaf."""
+    paths = [
+        (lineage[-1],) if lineage[0] in PSEUDO_FAMILIES else lineage
+        for lineage in lineages
+    ]
+    inner = {path[:depth] for path in paths for depth in range(1, len(path))}
+    paths = [path + (STOP,) if path in inner else path for path in paths]
+    # Children of each node, in order of appearance; the root is ()
+    children = {}
+    for path in paths:
+        for depth in range(1, len(path) + 1):
+            children.setdefault(path[: depth - 1], {})[path[:depth]] = None
+    units, groups = {}, []
+    siblings = [nodes for nodes in children.values() if len(nodes) > 1]
+    for group, nodes in enumerate(siblings):
+        for node in nodes:
+            units[node] = len(units)
+            groups.append(group)
+    layout = torch.zeros(len(paths), len(units))
+    for i, path in enumerate(paths):
+        for depth in range(1, len(path) + 1):
+            if path[:depth] in units:
+                layout[i, units[path[:depth]]] = 1
+    return layout, torch.tensor(groups)

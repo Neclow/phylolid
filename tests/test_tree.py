@@ -1,4 +1,4 @@
-"""Unit tests for the Glottolog tree distances in src/lid/tree.py."""
+"""Unit tests for the trees over the language classes in src/lid/tree.py."""
 
 from itertools import permutations
 
@@ -8,11 +8,13 @@ from ete4 import Tree
 
 from src.lid.tree import (
     IGNORE,
+    huffman_lineages,
     level_labels,
     levels,
     newick,
     shuffle_classes,
     tree_distances,
+    tree_softmax_layout,
 )
 
 # Sisters a and b, a language l above its dialect d, an isolate e, two members of a pseudo-family
@@ -91,3 +93,43 @@ def test_newick():
     assert lines == ["((a,b)g,(d)l)f;", "e;"]
     names = [node.name for line in lines for node in Tree(line, parser=1).traverse()]
     assert sorted(names) == ["a", "b", "d", "e", "f", "g", "l"]
+
+
+def test_huffman_lineages():
+    classes = ["a", "b", "c", "d", "e"]
+    lineages = huffman_lineages(classes, [8, 4, 2, 1, 1], seed=0)
+    # One root; each class ends its own lineage, the frequent ones nearer the root
+    assert {lineage[0] for lineage in lineages} == {"huffman0"}
+    assert [lineage[-1] for lineage in lineages] == classes
+    assert [len(lineage) - 1 for lineage in lineages] == [1, 2, 3, 4, 4]
+    # Binary: every internal node has two children
+    children = {}
+    for lineage in lineages:
+        for depth in range(1, len(lineage)):
+            children.setdefault(lineage[depth - 1], set()).add(lineage[depth])
+    assert all(len(nodes) == 2 for nodes in children.values())
+
+
+def test_huffman_ties_follow_the_seed():
+    # Equal counts: a balanced tree, its pairs set by the seed rather than the classes' order
+    classes = list("abcdefgh")
+    trees = [huffman_lineages(classes, [1] * 8, seed) for seed in range(2)]
+    assert all(len(lineage) == 4 for tree in trees for lineage in tree)
+    # Sister pairs: the classes below each class's parent
+    pairs = [
+        {
+            frozenset(c for c, other in zip(classes, tree) if other[-2] == lineage[-2])
+            for lineage in tree
+        }
+        for tree in trees
+    ]
+    assert pairs[0] != pairs[1]
+
+
+def test_tree_softmax_layout():
+    layout, groups = tree_softmax_layout(LINEAGES)
+    # Units by sibling group: the root's children (f, the isolate e, the pseudo-family's p and q), f's (g, l), g's
+    # (a, b), l's (its STOP child, d)
+    assert groups.tolist() == [0, 0, 0, 0, 1, 1, 2, 2, 3, 3]
+    paths = [row.nonzero().flatten().tolist() for row in layout]
+    assert paths == [[0, 4, 6], [0, 4, 7], [0, 5, 8], [0, 5, 9], [1], [2], [3]]
