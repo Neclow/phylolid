@@ -275,8 +275,8 @@ def parse_args():
     model = parser.add_mutually_exclusive_group(required=True)
     model.add_argument("--model", choices=sorted(MODEL_ZOO), help="Zoo model")
     model.add_argument(
-        "--checkpoint",
-        help="Lightning checkpoint of a model we trained (pipeline/train.py)",
+        "--run",
+        help="wandb run id of a model we trained (pipeline/train.py), e.g. 0g07tm5j",
     )
     parser.add_argument(
         "--batch-size",
@@ -300,14 +300,19 @@ def parse_args():
 
 def main():
     args = parse_args()
-    # Outputs in zoo/<org>--<name>, or trained/<run>, the run being the checkpoint's folder
-    # (<project>/<run>/checkpoints/<file>.ckpt)
-    model_id = args.model or args.checkpoint
+    # Outputs in zoo/<org>--<name>, or trained/<run>
     if args.model:
+        model_id = args.model
         name, kind = args.model.replace("/", "--"), "zoo"
     else:
-        name = os.path.basename(os.path.dirname(os.path.dirname(args.checkpoint)))
-        kind = "trained"
+        # The one checkpoint train.py keeps per run, the best by dev loss: <project>/<run>/checkpoints/<file>.ckpt
+        checkpoints = glob(f"{DEFAULT_EVAL_DIR}/*/{args.run}/checkpoints/*.ckpt")
+        if len(checkpoints) != 1:
+            raise SystemExit(
+                f"Run {args.run}: one checkpoint expected, found {checkpoints}"
+            )
+        model_id = checkpoints[0]
+        name, kind = args.run, "trained"
     output_dir = f"{DEFAULT_EVAL_DIR}/{kind}/{name}"
     if os.path.exists(output_dir):
         raise SystemExit(f"{output_dir} exists: move or remove it first")
@@ -335,7 +340,7 @@ def main():
         mapping = zoo_mapping(args.model)
     else:
         features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
-        model = Predictor(args.checkpoint, features, args.device)
+        model = Predictor(model_id, features, args.device)
         mapping = trained_mapping(model.labels())
     classes, label_class = model_classes(mapping, model.labels())
     n_classes = len(classes)
