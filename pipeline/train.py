@@ -22,6 +22,7 @@ from src.data.datasets import FeatureDataset, collate_features
 from src.data.glottolog import lineages
 from src.lid.features import Features
 from src.lid.model import LitFastText
+from src.lid.tree import newick, shuffle_classes
 
 
 def parse_args():
@@ -62,6 +63,11 @@ def parse_args():
         type=float,
         default=0.0,
         help="Weight of the phylo-nn heads predicting each sentence's Glottolog family (H0) and H3 ancestor (0: they only probe)",
+    )
+    parser.add_argument(
+        "--shuffle-tree",
+        action="store_true",
+        help="Control: the classes shuffled over their places in the Glottolog tree (with --seed), its shape kept",
     )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
@@ -108,8 +114,17 @@ def main():
         )
         for split in ["train", "dev"]
     }
-    # The classes' Glottolog lineages, from the datasets' mapping, for the soft targets
+    # The classes' Glottolog lineages, from the datasets' mapping
     lineage = lineages(pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv"))
+    class_lineages = [lineage[g] for g in classes]
+    if args.shuffle_tree:
+        class_lineages = shuffle_classes(class_lineages, args.seed)
+    # The tree the run trains with, in its folder next to its checkpoints (<project>/<run>)
+    if logger:
+        run_dir = f"{DEFAULT_EVAL_DIR}/{logger.name}/{logger.version}"
+        os.makedirs(run_dir, exist_ok=True)
+        with open(f"{run_dir}/tree.nwk", "w") as f:
+            f.write(newick(class_lineages) + "\n")
     model = LitFastText(
         features.size,
         classes,
@@ -120,7 +135,7 @@ def main():
         patristic_weight=args.patristic_weight,
         quartet_weight=args.quartet_weight,
         phylonn_weight=args.phylonn_weight,
-        lineages=[lineage[g] for g in classes],
+        lineages=class_lineages,
     )
 
     if args.device.startswith("cuda"):
