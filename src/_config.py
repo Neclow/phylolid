@@ -38,6 +38,8 @@ GLOTLIDC_MODELS: Final = ["cis-lmu/glotlid", "epfl-nlp/ConLID"]
 DEFAULT_SPLIT_DIR: Final = f"{DEFAULT_DATA_DIR}/splits"
 # Scores and per-sentence predictions of each model: zoo/<org>--<name>/, trained/<run>/
 DEFAULT_EVAL_DIR: Final = f"{DEFAULT_DATA_DIR}/eval"
+# Our training runs, one row each: wandb run id, train.py's flags, whether evaluate.py has scored the run
+DEFAULT_RUNS_FILE: Final = f"{DEFAULT_EVAL_DIR}/runs.csv"
 # Glottocode of non-language labels (undetermined text, no linguistic content), so that scoring works in glottocode
 # space only. Glottolog numbers each prefix from 1234, so it can never be a real glottocode
 NON_LANGUAGE_GLOTTOCODE: Final = "zxxx0000"

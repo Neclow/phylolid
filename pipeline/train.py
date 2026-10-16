@@ -15,6 +15,7 @@ from src._config import (
     DEFAULT_DATASET_DIR,
     DEFAULT_EVAL_DIR,
     DEFAULT_N_THREADS,
+    DEFAULT_RUNS_FILE,
     DEFAULT_SPLIT_DIR,
 )
 from src.data.datasets import FeatureDataset, collate_features
@@ -140,6 +141,15 @@ def main():
         ],
     )
     trainer.fit(model, loaders["train"], loaders["dev"])
+    # The run's row in the runs table, which evaluate.py marks once it scores the run. A run stopped with Ctrl-C exits
+    # in fit, so only finished runs get one; a dry run has no run
+    if logger:
+        runs = pd.DataFrame(
+            [{"run": logger.experiment.id, **vars(args), "evaluated": False}]
+        )
+        if os.path.exists(DEFAULT_RUNS_FILE):
+            runs = pd.concat([pd.read_csv(DEFAULT_RUNS_FILE), runs])
+        runs.to_csv(DEFAULT_RUNS_FILE, index=False)
 
 
 if __name__ == "__main__":

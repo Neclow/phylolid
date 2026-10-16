@@ -21,6 +21,7 @@ from src._config import (
     DEFAULT_EVAL_DIR,
     DEFAULT_N_THREADS,
     DEFAULT_REFERENCE_TREE_PROCESSED_DIR,
+    DEFAULT_RUNS_FILE,
     DEFAULT_SPLIT_DIR,
     GLOTLIDC_MODELS,
     HELDOUT_FAMILIES,
@@ -448,6 +449,11 @@ def main():
     )
     predictions.to_parquet(f"{output_dir}/predictions.parquet", index=False)
     logging.info(f"-> {output_dir}")
+    # Mark the run scored in the runs table train.py writes
+    if args.run:
+        runs = pd.read_csv(DEFAULT_RUNS_FILE)
+        runs.loc[runs["run"] == args.run, "evaluated"] = True
+        runs.to_csv(DEFAULT_RUNS_FILE, index=False)
 
 
 if __name__ == "__main__":
