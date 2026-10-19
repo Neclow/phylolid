@@ -33,7 +33,7 @@ repos:
         types: [python]
       - id: pytest
         name: pytest
-        entry: pixi run test
+        entry: pixi run unit_test
         language: system
         pass_filenames: false
         types: [python]
