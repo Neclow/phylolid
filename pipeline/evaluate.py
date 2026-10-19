@@ -397,7 +397,7 @@ def main():
     sentences.loc[other_script, "target"] = -1
     logging.info(
         f"Left out {other_script.sum()} known-class sentences in a script the model's labels do not cover: "
-        f"{sorted(set(sentences.loc[other_script, 'glottocode'] + '_' + sentence_scripts[other_script]))}"
+        f"{sorted({f'{g}_{s}' for g, s in zip(sentences.loc[other_script, 'glottocode'], sentence_scripts[other_script])})}"
     )
 
     # CRM cost between classes: Glottolog, 1 - LCA-hF
