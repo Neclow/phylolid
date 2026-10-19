@@ -17,6 +17,7 @@ train_test_heldout_split = "python -m pipeline.train_test_heldout_split"
 evaluate = "python -m pipeline.evaluate"
 build_vocab = "python -m pipeline.build_vocab"
 train = "python -m pipeline.train"
+train_eval = "bash pipeline/train_eval.sh"
 test = "python -m pytest tests"
 
 [dependencies]
