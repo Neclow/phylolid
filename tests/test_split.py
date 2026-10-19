@@ -24,6 +24,16 @@ def test_unique_sentences_across_files(tmp_path):
     ]
 
 
+def test_unique_sentences_normalized():
+    # The same verse with another case, punctuation, verse number or spacing is a duplicate; other words are not
+    pairs = [
+        ("abc_Latn_pbc", "In the beginning, God created."),
+        ("abc_Latn_cbc", "1:1 in the beginning God  created"),
+        ("abc_Latn_cbc", "In the beginning God made."),
+    ]
+    assert unique_sentences(pairs) == [pairs[0], pairs[2]]
+
+
 def test_split_sentences_small_class():
     sentences = [("src", str(i)) for i in range(50)]
     splits = split_sentences(sentences)
