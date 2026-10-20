@@ -81,6 +81,12 @@ def parse_args():
         action="store_true",
         help="Control: the classes shuffled over their places in the tree (with --seed), its shape kept",
     )
+    parser.add_argument(
+        "--plain-spelling",
+        type=float,
+        default=0.0,
+        help="Spelling augmentation: share of the Latin- and Arabic-script training sentences read lowercased and without diacritics, tone or vowel marks",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
         "--n-threads",
@@ -119,8 +125,10 @@ def main():
     features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
     # Classes: the training glottocodes, in a fixed order
     classes = sorted(os.listdir(f"{DEFAULT_SPLIT_DIR}/train"))
+    # Spelling augmentation for training only: dev is scored as written
     datasets = {
-        split: FeatureDataset(split, classes, features) for split in ["train", "dev"]
+        "train": FeatureDataset("train", classes, features, plain=args.plain_spelling),
+        "dev": FeatureDataset("dev", classes, features),
     }
     loaders = {
         split: DataLoader(

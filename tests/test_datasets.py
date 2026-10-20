@@ -2,7 +2,12 @@
 
 from torch.utils.data import DataLoader
 
-from src.data.datasets import FeatureDataset, TextDataset, collate_features
+from src.data.datasets import (
+    FeatureDataset,
+    TextDataset,
+    collate_features,
+    plain_spelling,
+)
 from src.lid.features import Features
 
 
@@ -57,3 +62,21 @@ def test_feature_dataset_and_batches(tmp_path):
     assert batch["ids"].tolist() == features("the cat") + features("épée")
     assert batch["offsets"].tolist() == [0, len(features("the cat"))]
     assert batch["target"].tolist() == [1, 0]
+
+
+def test_plain_spelling():
+    # Case, diacritics and tone marks go (Latin), as Arabic vowel marks; letters without a decomposition stay
+    assert plain_spelling("Kɛ̄ Jɛhova Ɓàá ŋ̀ ø") == "kɛ jɛhova ɓaa ŋ ø"
+    assert plain_spelling("كَتَبَ") == "كتب"
+
+
+def test_feature_dataset_plain_spelling(tmp_path):
+    write(tmp_path / "train" / "abcd1234" / "abc_Latn_cbc.txt", "Épée\n")
+    write(tmp_path / "train" / "efgh1234" / "efg_Deva_pbc.txt", "हिंदी\n")
+    features = Features([])
+    dataset = FeatureDataset(
+        "train", ["abcd1234", "efgh1234"], features, split_dir=tmp_path, plain=1.0
+    )
+    # Latin script in plain spelling; Devanagari kept, as its combining marks are vowels
+    assert dataset[0] == (features("epee"), 0)
+    assert dataset[1] == (features("हिंदी"), 1)
