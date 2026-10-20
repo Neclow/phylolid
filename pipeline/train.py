@@ -21,7 +21,7 @@ from src._config import (
 )
 from src.data.datasets import FeatureDataset, collate_features
 from src.data.glottolog import lineages
-from src.lid.features import Features
+from src.lid.features import SPELLINGS, Features, vocab_file
 from src.lid.model import LitFastText
 from src.lid.tree import huffman_lineages, newick, shuffle_classes
 
@@ -82,10 +82,10 @@ def parse_args():
         help="Control: the classes shuffled over their places in the tree (with --seed), its shape kept",
     )
     parser.add_argument(
-        "--plain-spelling",
-        type=float,
-        default=0.0,
-        help="Spelling augmentation: share of the Latin- and Arabic-script training sentences read lowercased and without diacritics, tone or vowel marks",
+        "--spelling",
+        choices=SPELLINGS,
+        default="raw",
+        help="How the features read the text: as written, normalized (lowercase, no Latin or Arabic diacritics, tone or vowel marks), or both (pixi run build_vocab --spelling first)",
     )
     parser.add_argument("--seed", type=int, default=42, help="Seed")
     parser.add_argument(
@@ -122,13 +122,11 @@ def main():
         logger = WandbLogger(save_dir=DEFAULT_EVAL_DIR)
         logger.experiment.config.update(vars(args))
 
-    features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
+    features = Features.from_json(vocab_file(args.spelling), args.spelling)
     # Classes: the training glottocodes, in a fixed order
     classes = sorted(os.listdir(f"{DEFAULT_SPLIT_DIR}/train"))
-    # Spelling augmentation for training only: dev is scored as written
     datasets = {
-        "train": FeatureDataset("train", classes, features, plain=args.plain_spelling),
-        "dev": FeatureDataset("dev", classes, features),
+        split: FeatureDataset(split, classes, features) for split in ["train", "dev"]
     }
     loaders = {
         split: DataLoader(
@@ -167,6 +165,7 @@ def main():
         quartet_weight=args.quartet_weight,
         phylonn_weight=args.phylonn_weight,
         tree_softmax=args.tree_softmax,
+        spelling=args.spelling,
         lineages=class_lineages,
     )
 

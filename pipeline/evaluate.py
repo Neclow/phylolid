@@ -29,7 +29,7 @@ from src._config import (
 )
 from src.data.datasets import TextDataset
 from src.data.glottolog import lineages
-from src.lid.features import Features
+from src.lid.features import Features, vocab_file
 from src.lid.metrics import (
     KnownAccuracy,
     KnownHRSeverity,
@@ -340,7 +340,12 @@ def main():
         model = load_model(args.model, DEFAULT_CACHE_DIR, args.device)
         mapping = zoo_mapping(args.model)
     else:
-        features = Features.from_json(f"{DEFAULT_SPLIT_DIR}/vocab.json")
+        # The spelling the run was trained with, saved in its checkpoint (raw before the option existed)
+        checkpoint = torch.load(
+            model_id, map_location="cpu", mmap=True, weights_only=False
+        )
+        spelling = checkpoint["hyper_parameters"].get("spelling", "raw")
+        features = Features.from_json(vocab_file(spelling), spelling)
         model = Predictor(model_id, features, args.device)
         mapping = trained_mapping(model.labels())
     classes, label_class = model_classes(mapping, model.labels())

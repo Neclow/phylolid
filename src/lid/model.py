@@ -89,7 +89,8 @@ class LitFastText(LightningModule):
     quartet_weight times the TreeLosses of the sentence embeddings, plus phylonn_weight times the phylo-nn heads, which
     predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With tree_softmax, the output layer
     is a TreeSoftmax over the lineages' tree.
-    The classes' lineages are needed for training only.
+    The classes' lineages are needed for training only. spelling is only saved with the checkpoint: how its features
+    read the text (src/lid/features.py, SPELLINGS), for the predictions to read it alike.
     """
 
     # Buffer of the training targets, typed as torchmetrics does, and the tree losses (training only)
@@ -111,6 +112,7 @@ class LitFastText(LightningModule):
         phylonn_sizes=None,
         tree_softmax=False,
         tree_softmax_units=0,
+        spelling="raw",
         lineages=None,
     ):
         super().__init__()
