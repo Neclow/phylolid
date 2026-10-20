@@ -2,8 +2,13 @@
 
 import json
 import re
+import unicodedata
 
 from functools import lru_cache
+
+import regex
+
+from src._config import DEFAULT_SPLIT_DIR
 
 # fastText's word separators (Dictionary::readWord): space, newline, carriage return, tab, vertical tab, form feed and
 # NUL. Other spaces (e.g. no-break space, U+2028) stay inside words
@@ -15,6 +20,42 @@ MAXN = 5
 BUCKET = 1_000_000
 # Words whose ids are cached, per process: most words of a corpus are frequent ones
 CACHE_SIZE = 1 << 20
+# Combining marks on a Latin or Arabic letter: diacritics, tone marks and Arabic vowel marks, often left out in
+# writing. In other scripts, such as Devanagari, combining marks are vowels, and stay
+OPTIONAL_MARKS = regex.compile(r"(?<=[\p{Latin}\p{Arabic}]\p{M}*)\p{M}")
+
+
+# How the features read a text's spelling: as written; normalized (normalize_spelling); or both, each word that
+# normalization changes also counting in its normalized form
+SPELLINGS = ["raw", "normalized", "both"]
+
+
+def normalize_spelling(text):
+    """The text lowercased and without the combining marks of Latin and Arabic letters, as speech transcripts and
+    everyday writing often spell languages whose Bible marks them."""
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return unicodedata.normalize("NFC", OPTIONAL_MARKS.sub("", decomposed))
+
+
+def spelled_words(text, spelling):
+    """The words of a text in one of SPELLINGS: "Le château" -> raw Le château; normalized le chateau; both Le le
+    château chateau."""
+    if spelling == "normalized":
+        return tokenize(normalize_spelling(text))
+    words = tokenize(text)
+    if spelling == "both":
+        words = [
+            form
+            for word in words
+            for form in dict.fromkeys([word, normalize_spelling(word)])
+        ]
+    return words
+
+
+def vocab_file(spelling):
+    """The vocabulary of a spelling, written by pipeline/build_vocab.py."""
+    suffix = "" if spelling == "raw" else f"_{spelling}"
+    return f"{DEFAULT_SPLIT_DIR}/vocab{suffix}.json"
 
 
 def tokenize(text):
@@ -32,19 +73,21 @@ def fnv1a(ngram):
 
 class Features:
     """fastText's feature ids of a text: each word's id in the vocabulary (if it has one), then its n-grams' ids, which
-    come after the vocabulary's (Dictionary::addSubwords)."""
+    come after the vocabulary's (Dictionary::addSubwords). The words are read in one of SPELLINGS (spelled_words).
+    """
 
-    def __init__(self, vocab):
+    def __init__(self, vocab, spelling="raw"):
         # The vocabulary's words, most frequent first: a word's position is its id
         self.index = {word: i for i, word in enumerate(vocab)}
         self.size = len(self.index) + BUCKET
+        self.spelling = spelling
         self.word_ids = lru_cache(maxsize=CACHE_SIZE)(self._word_ids)
 
     @classmethod
-    def from_json(cls, path):
+    def from_json(cls, path, spelling="raw"):
         """Features over a vocabulary written by pipeline/build_vocab.py."""
         with open(path, encoding="utf-8") as f:
-            return cls(json.load(f))
+            return cls(json.load(f), spelling)
 
     def _word_ids(self, word):
         token = f"<{word}>"
@@ -59,4 +102,5 @@ class Features:
         return ids + [len(self.index) + fnv1a(ngram) % BUCKET for ngram in ngrams]
 
     def __call__(self, text):
-        return [i for word in tokenize(text) for i in self.word_ids(word)]
+        words = spelled_words(text, self.spelling)
+        return [i for word in words for i in self.word_ids(word)]
