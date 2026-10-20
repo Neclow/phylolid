@@ -73,6 +73,8 @@ def soft_targets(lineages, lam, beta):
 
 # Glottolog levels the phylo-nn heads predict: the family (H0) and the ancestor three levels below it (H3)
 PHYLONN_LEVELS = [0, 3]
+# Losses that can be added to cross-entropy, each weighted by <name>_weight
+EXTRA_LOSSES = ["patristic", "quartet", "phylonn"]
 
 
 def masked_cross_entropy(logits, labels):
@@ -152,6 +154,10 @@ class LitFastText(LightningModule):
             [KnownAccuracy(len(classes)), KnownMacroF1(len(classes))],
             prefix="valid_",
         )
+        # The extra losses in use (weight > 0)
+        self.extra_losses = [
+            name for name in EXTRA_LOSSES if self.hparams[f"{name}_weight"]
+        ]
 
     def forward(self, ids, offsets):
         return self.model(ids, offsets)
@@ -160,30 +166,23 @@ class LitFastText(LightningModule):
         embeddings = self.model.embedding(batch["ids"], batch["offsets"])
         # Against each class's soft target; dev scores stay against the true class, comparable across lam
         ce = self.loss_fn(self.model.linear(embeddings), self.targets[batch["target"]])
-        weights = {
-            "patristic": self.hparams["patristic_weight"],
-            "quartet": self.hparams["quartet_weight"],
-        }
-        # Always computed, as a measure of how tree-like the embeddings are; with a gradient only when weighted
-        with torch.set_grad_enabled(any(weights.values())):
+        # Always computed, as a measure of how tree-like the embeddings are; with a gradient only when used
+        with torch.set_grad_enabled(
+            "patristic" in self.extra_losses or "quartet" in self.extra_losses
+        ):
             patristic, quartet = self.tree_losses(embeddings, batch["target"])
-        loss = ce
-        for name, value in {"patristic": patristic, "quartet": quartet}.items():
-            if weights[name]:
-                loss = loss + weights[name] * value
-        # The phylo-nn heads, one per level; without weight they are trained on the embeddings detached (probes,
+        # The phylo-nn heads, one per level; when not used, they are trained on the embeddings detached (probes,
         # outside the model's loss), so they only measure how much of the Glottolog groups the embeddings hold
-        weight = self.hparams["phylonn_weight"]
-        inputs = embeddings if weight else embeddings.detach()
+        inputs = embeddings if "phylonn" in self.extra_losses else embeddings.detach()
         phylonn = [
             masked_cross_entropy(head(inputs), labels[batch["target"]])
             for head, labels in zip(self.phylonn_heads, self.phylonn_labels)
         ]
-        probes = 0.0
-        if weight:
-            loss = loss + weight * sum(phylonn)
-        else:
-            probes = sum(phylonn)
+        values = {"patristic": patristic, "quartet": quartet, "phylonn": sum(phylonn)}
+        extra = [values[name] for name in self.extra_losses]
+        weights = [self.hparams[f"{name}_weight"] for name in self.extra_losses]
+        loss = ce + sum(weight * value for weight, value in zip(weights, extra))
+        probes = 0.0 if "phylonn" in self.extra_losses else values["phylonn"]
         # The number of texts (Lightning would infer it from the ids)
         n = len(batch["target"])
         self.log_dict(

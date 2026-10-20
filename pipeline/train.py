@@ -22,7 +22,7 @@ from src._config import (
 from src.data.datasets import FeatureDataset, collate_features
 from src.data.glottolog import lineages
 from src.lid.features import SPELLINGS, Features, vocab_file
-from src.lid.model import LitFastText
+from src.lid.model import EXTRA_LOSSES, LitFastText
 from src.lid.tree import huffman_lineages, newick, shuffle_classes
 
 
@@ -45,24 +45,12 @@ def parse_args():
         default=0.5,
         help="How fast a relative's share falls with its distance in Glottolog levels",
     )
-    # Losses on the embeddings against the Glottolog tree (src/lid/tree_losses.py), after phylogeny-guided-lid; 0: off
+    # Losses on the sentence embeddings against the tree (src/lid/tree_losses.py, src/lid/model.py), after
+    # phylogeny-guided-lid
     parser.add_argument(
-        "--patristic-weight",
-        type=float,
-        default=0.0,
-        help="Weight of 1 - correlation between class-centroid distances and patristic (tree path) distances",
-    )
-    parser.add_argument(
-        "--quartet-weight",
-        type=float,
-        default=0.0,
-        help="Weight of the quartet loss on class centroids",
-    )
-    parser.add_argument(
-        "--phylonn-weight",
-        type=float,
-        default=0.0,
-        help="Weight of the phylo-nn heads predicting each sentence's Glottolog family (H0) and H3 ancestor (0: they only probe)",
+        "--extra-losses",
+        default="",
+        help="Losses added to cross-entropy, comma-separated: patristic (1 - correlation of class-centroid and tree distances), quartet (class centroids), phylonn (heads predicting each sentence's family and H3 ancestor; otherwise they only probe)",
     )
     parser.add_argument(
         "--tree-softmax",
@@ -104,10 +92,19 @@ def parse_args():
         help="One training and one dev batch, to test the pipeline",
     )
     args = parser.parse_args()
+    extra = extra_losses(args)
+    unknown = set(extra) - set(EXTRA_LOSSES)
+    if unknown:
+        parser.error(f"--extra-losses: {sorted(unknown)} not in {EXTRA_LOSSES}")
     # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
-    if args.phylonn_weight and args.tree == "huffman":
-        parser.error("--phylonn-weight needs --tree glottolog")
+    if "phylonn" in extra and args.tree == "huffman":
+        parser.error("--extra-losses phylonn needs --tree glottolog")
     return args
+
+
+def extra_losses(args):
+    """The --extra-losses names, a list (kept as the given string in args, as the runs table records it)."""
+    return [name for name in args.extra_losses.split(",") if name]
 
 
 def main():
@@ -160,9 +157,8 @@ def main():
         args.lr,
         lam=args.soft_lambda,
         beta=args.soft_beta,
-        patristic_weight=args.patristic_weight,
-        quartet_weight=args.quartet_weight,
-        phylonn_weight=args.phylonn_weight,
+        # Each extra loss weighs 1
+        **{f"{name}_weight": 1.0 for name in extra_losses(args)},
         tree_softmax=args.tree_softmax,
         spelling=args.spelling,
         lineages=class_lineages,
