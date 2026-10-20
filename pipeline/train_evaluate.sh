@@ -10,8 +10,8 @@ cd "$(dirname "$0")/.."
 DEVICE=$1
 shift
 
-# 8 random hex characters, as a wandb run id
-export WANDB_RUN_ID=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+# 8 random hex characters, as a wandb run id, unless a wandb sweep agent set the run's id
+export WANDB_RUN_ID=${WANDB_RUN_ID:-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')}
 echo "Run $WANDB_RUN_ID: train $* on $DEVICE, then evaluate"
 pixi run train "$@" --device "$DEVICE"
 pixi run evaluate --run "$WANDB_RUN_ID" --device "$DEVICE"
