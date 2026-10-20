@@ -53,6 +53,11 @@ def parse_args():
         help="Losses added to cross-entropy, comma-separated: patristic (1 - correlation of class-centroid and tree distances), quartet (class centroids), phylonn (heads predicting each sentence's family and H3 ancestor; otherwise they only probe)",
     )
     parser.add_argument(
+        "--gradnorm",
+        action="store_true",
+        help="Learn the extra losses' weights during training with GradNorm, cross-entropy's fixed at 1 (otherwise each weighs 1)",
+    )
+    parser.add_argument(
         "--tree-softmax",
         action="store_true",
         help="Output layer: choices down the tree (--tree) instead of one softmax over the classes",
@@ -96,6 +101,8 @@ def parse_args():
     unknown = set(extra) - set(EXTRA_LOSSES)
     if unknown:
         parser.error(f"--extra-losses: {sorted(unknown)} not in {EXTRA_LOSSES}")
+    if args.gradnorm and not extra:
+        parser.error("--gradnorm needs --extra-losses")
     # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
     if "phylonn" in extra and args.tree == "huffman":
         parser.error("--extra-losses phylonn needs --tree glottolog")
@@ -157,8 +164,9 @@ def main():
         args.lr,
         lam=args.soft_lambda,
         beta=args.soft_beta,
-        # Each extra loss weighs 1
+        # Each extra loss starts at weight 1 (and stays there without GradNorm)
         **{f"{name}_weight": 1.0 for name in extra_losses(args)},
+        gradnorm=args.gradnorm,
         tree_softmax=args.tree_softmax,
         spelling=args.spelling,
         lineages=class_lineages,

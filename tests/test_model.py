@@ -75,8 +75,10 @@ def test_tree_softmax():
     assert torch.allclose(log_probs[:, 0].exp(), choices[0] * choices[1] * choices[2])
 
 
-@pytest.mark.parametrize("tree_softmax", [False, True])
-def test_training_and_prediction(tmp_path, tree_softmax):
+@pytest.mark.parametrize(
+    "tree_softmax, gradnorm", [(False, False), (True, False), (False, True)]
+)
+def test_training_and_prediction(tmp_path, tree_softmax, gradnorm):
     # Two classes, a train and a dev split: one epoch on the CPU, scored on dev
     for split in ["train", "dev"]:
         write(tmp_path / split / "abcd1234" / "abc_Latn_cbc.txt", "the cat\nthe dog\n")
@@ -102,6 +104,7 @@ def test_training_and_prediction(tmp_path, tree_softmax):
         quartet_weight=0.1,
         phylonn_weight=0.1,
         tree_softmax=tree_softmax,
+        gradnorm=gradnorm,
         lineages=[("f", "abcd1234"), ("f", "efgh1234")],
     )
     trainer = Trainer(
@@ -113,14 +116,19 @@ def test_training_and_prediction(tmp_path, tree_softmax):
         enable_model_summary=False,
     )
     trainer.fit(model, train, dev)
-    # One step per batch: SparseAdam for the embedding table, AdamW for the rest, both down to a learning rate of 0
+    # GradNorm moved the extra losses' weights from where they started
+    if gradnorm:
+        assert not torch.allclose(model.log_weights.exp(), torch.full((3,), 0.1))
+    # One step per batch: SparseAdam for the embedding table, AdamW for the rest (Adam for GradNorm's log weights), all
+    # down to a learning rate of 0
     assert trainer.global_step == len(train)
-    sparse, dense = trainer.optimizers
+    sparse, dense, *weights = trainer.optimizers
     assert isinstance(sparse, torch.optim.SparseAdam)
     assert isinstance(dense, torch.optim.AdamW)
     assert sparse.param_groups[0]["params"] == [model.model.embedding.weight]
+    assert len(weights) == gradnorm
     assert [o.param_groups[0]["lr"] for o in trainer.optimizers] == pytest.approx(
-        [0, 0]
+        [0] * len(trainer.optimizers)
     )
     assert {"valid_loss", "valid_KnownAccuracy", "valid_KnownMacroF1"} <= set(
         trainer.callback_metrics
@@ -135,3 +143,24 @@ def test_training_and_prediction(tmp_path, tree_softmax):
     batch = collate_features([(features(text), 0) for text in texts])
     expected = model(batch["ids"], batch["offsets"]).softmax(dim=-1)
     assert torch.allclose(torch.from_numpy(predictor.predict_proba(texts)), expected)
+
+
+def test_gradnorm_raises_a_small_loss():
+    lineages = [("f", "abcd1234"), ("f", "efgh1234")]
+    model = LitFastText(
+        10,
+        ["abcd1234", "efgh1234"],
+        4,
+        0.1,
+        patristic_weight=1.0,
+        gradnorm=True,
+        lineages=lineages,
+    )
+    embeddings = torch.randn(2, 4, requires_grad=True)
+    # An extra loss whose gradient is far smaller than cross-entropy's: GradNorm raises its weight
+    loss = model.gradnorm_loss(
+        embeddings, [(10 * embeddings).sum(), (0.01 * embeddings).sum()]
+    )
+    loss.backward()
+    grad = model.log_weights.grad
+    assert grad is not None and grad[0] < 0
