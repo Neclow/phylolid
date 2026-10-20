@@ -250,3 +250,6 @@ data/_*/
 # Sources for me to read
 notes/
 papers/
+
+# Files of wandb sweep agents, written where an agent starts
+/wandb/
