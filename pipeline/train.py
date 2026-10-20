@@ -28,7 +28,6 @@ from src.lid.tree import huffman_lineages, newick, shuffle_classes
 
 def parse_args():
     parser = ArgumentParser(description=__doc__)
-    # Defaults: ConLID's cross-entropy baseline (papers/conlid.pdf, Table 10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--batch-size", type=int, default=128, help="Batch size")
     parser.add_argument("--n-epochs", type=int, default=1, help="Training epochs")

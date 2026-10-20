@@ -25,7 +25,7 @@ def unique_sentences(pairs):
     """(name, sentence) pairs, stripped, without empty sentences or duplicates: a duplicate is kept under its first name.
     Duplicates are the same text once normalized (src/data/duplicates.py: case, punctuation, digits and spacing
     removed), e.g. a verse in two Bible collections: GlotLID removes exact duplicates only, and 35% of the Bible test
-    sentences then repeated a training sentence (notebooks/omnilingual_analysis.ipynb).
+    sentences then repeated a training sentence.
     """
     seen = set()
     sentences = []

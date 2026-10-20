@@ -52,7 +52,7 @@ from src.models._model_zoo import MODEL_ZOO, load_model
 
 # GlotLID-C files (<label>_<source>+<tag>.txt) of a sister language's text, which GlotLID merged under the label:
 # skipped at test, as a model that recognises them would be scored wrong. Not GlotLID's corrections of mislabelled
-# sources (e.g. ktu_Latn +kng), which hold the label's own text. Evidence in notes/label_audit.md
+# sources (e.g. ktu_Latn +kng), which hold the label's own text
 MERGED_TAGS = {"tet_Latn": ["tdt"], "aii_Syrc": ["syc", "arc"], "fas_Arab": ["prs"]}
 # ISO 15924 variants written in their script's Unicode characters: a label in a variant covers text in the script.
 # Kana covers Japanese text, tagged Jpan (Han + Hiragana + Katakana)
@@ -63,7 +63,7 @@ SCRIPT_VARIANTS = {
     "Hira": "Jpan",
     "Kana": "Jpan",
 }
-# Splits -> arms: 2 datasets x 2 arms, each scored apart (notes/plan.md, option b)
+# Splits -> arms: 2 datasets x 2 arms, each scored apart
 ARMS = {"test": "known", "heldout": "unseen"}
 # Raw model labels saved per sentence, with their probabilities or scores
 TOP_K = 10
@@ -361,7 +361,7 @@ def main():
     true_lineages = [model_lineages[g] for g in classes] + [
         dataset_lineages[g] for g in held
     ]
-    # ihR counts every glottocode of data/splits, the same set for every model (notes/metrics.md)
+    # ihR counts every glottocode of data/splits, the same set for every model
     roles = pd.read_csv(f"{DEFAULT_SPLIT_DIR}/languages.csv")
     split_glottocodes = roles.loc[
         (roles["dataset"] == "glotlid-corpus") & (roles["role"] == "train")
