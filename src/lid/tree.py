@@ -136,6 +136,29 @@ def huffman_lineages(classes, counts, seed):
     return lineages
 
 
+def hxe_layout(lineages):
+    """For hierarchical cross-entropy (src/lid/model.py, hxe_loss): the tree's nodes below the root as the classes each
+    holds, a (nodes, classes) mask, and each class's path of nodes from the root down to its own, a (classes, longest
+    path) matrix of node indices, -1 past its end. As in tree_softmax_layout, the families hang from one root, and so do
+    the pseudo-families' members."""
+    paths = [
+        (lineage[-1],) if lineage[0] in PSEUDO_FAMILIES else lineage
+        for lineage in lineages
+    ]
+    # Nodes by their path from the root, as in tree_softmax_layout
+    nodes = {}
+    for path in paths:
+        for depth in range(1, len(path) + 1):
+            nodes.setdefault(path[:depth], len(nodes))
+    members = torch.zeros(len(nodes), len(paths), dtype=torch.bool)
+    order = torch.full((len(paths), max(len(path) for path in paths)), -1)
+    for c, path in enumerate(paths):
+        for depth in range(1, len(path) + 1):
+            members[nodes[path[:depth]], c] = True
+            order[c, depth - 1] = nodes[path[:depth]]
+    return members, order
+
+
 def tree_softmax_layout(lineages):
     """The tree softmax's layout (src/lid/model.py, TreeSoftmax) over the lineages' tree: its units, the nodes that
     have siblings (an only child is chosen with probability 1, so it needs no score), as a (classes, units) matrix

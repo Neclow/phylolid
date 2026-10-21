@@ -9,7 +9,13 @@ from torchmetrics import MetricCollection
 
 from src.data.datasets import collate_features
 from src.lid.metrics import KnownAccuracy, KnownMacroF1
-from src.lid.tree import IGNORE, level_labels, tree_distances, tree_softmax_layout
+from src.lid.tree import (
+    IGNORE,
+    hxe_layout,
+    level_labels,
+    tree_distances,
+    tree_softmax_layout,
+)
 from src.lid.tree_losses import TreeLosses
 
 
@@ -95,7 +101,8 @@ class LitFastText(LightningModule):
     quartet_weight times the TreeLosses of the sentence embeddings, plus phylonn_weight times the phylo-nn heads, which
     predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With gradnorm, the weights of
     cross-entropy and these extra losses are learned (gradnorm_loss), all from 1 and summing to the number of losses.
-    With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree. The soft targets and the tree losses
+    With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree. With hxe_alpha > 0, the loss is the
+    hierarchical cross-entropy (hxe_loss) instead, against the true classes. The soft targets and the tree losses
     measure the tree with branch_lengths (src/lid/tree.py, BRANCH_LENGTHS).
     The classes' lineages are needed for training only. spelling is only saved with the checkpoint: how its features
     read the text (src/lid/features.py, SPELLINGS), for the predictions to read it alike.
@@ -104,6 +111,8 @@ class LitFastText(LightningModule):
     # Buffer of the training targets, typed as torchmetrics does, and the tree losses (training only)
     targets: torch.Tensor
     phylonn_labels: torch.Tensor
+    hxe_members: torch.Tensor
+    hxe_paths: torch.Tensor
     tree_losses: TreeLosses
     first_losses: torch.Tensor | None
 
@@ -124,6 +133,7 @@ class LitFastText(LightningModule):
         spelling="raw",
         gradnorm=False,
         branch_lengths="levels",
+        hxe_alpha=0.0,
         lineages=None,
     ):
         super().__init__()
@@ -159,6 +169,9 @@ class LitFastText(LightningModule):
                 persistent=False,
             )
             self.tree_losses = TreeLosses(tree_distances(lineages, branch_lengths), dim)
+            members, paths = hxe_layout(lineages)
+            self.register_buffer("hxe_members", members, persistent=False)
+            self.register_buffer("hxe_paths", paths, persistent=False)
         self.model = FastText(n_features, len(classes), dim, output)
         self.loss_fn = nn.CrossEntropyLoss()
         self.valid_metrics = MetricCollection(
@@ -205,10 +218,33 @@ class LitFastText(LightningModule):
         target = gradients.mean().detach() * (rates / rates.mean()) ** GRADNORM_ALPHA
         return (gradients - target).abs().sum()
 
+    def hxe_loss(self, logits, target):
+        """Hierarchical cross-entropy (Bertinetto et al. 2020): minus the sum, down the true class's path, of
+        exp(-hxe_alpha * depth) log p(node | its parent), a node's probability the sum of its classes' (the root: 1, the
+        families: depth 1). The last term is the class's own, log p(class | its node), 0 unless classes lie below it (a
+        language above its dialect). Cross-entropy when hxe_alpha is 0, as the logs add up to log p(class).
+        """
+        log_probs = logits.log_softmax(dim=-1)
+        paths = self.hxe_paths[target]
+        own = log_probs.gather(1, target.unsqueeze(1))
+        # Each path node's log-probability; past a path's end, the class's own (no term)
+        held = self.hxe_members[paths.clamp(min=0)]
+        nodes = log_probs.unsqueeze(1).masked_fill(~held, float("-inf")).logsumexp(-1)
+        nodes = torch.where(paths >= 0, nodes, own)
+        chain = torch.cat([torch.zeros_like(own), nodes, own], dim=1)
+        depths = torch.arange(1, chain.shape[1], device=logits.device)
+        weights = torch.exp(-self.hparams["hxe_alpha"] * depths)
+        return -((chain[:, 1:] - chain[:, :-1]) * weights).sum(dim=1).mean()
+
     def training_step(self, batch, batch_idx):
         embeddings = self.model.embedding(batch["ids"], batch["offsets"])
-        # Against each class's soft target; dev scores stay against the true class, comparable across lam
-        ce = self.loss_fn(self.model.linear(embeddings), self.targets[batch["target"]])
+        logits = self.model.linear(embeddings)
+        # Against each class's soft target, or hierarchical cross-entropy; dev scores stay against the true class,
+        # comparable across lam and hxe_alpha
+        if self.hparams["hxe_alpha"]:
+            ce = self.hxe_loss(logits, batch["target"])
+        else:
+            ce = self.loss_fn(logits, self.targets[batch["target"]])
         # Always computed, as a measure of how tree-like the embeddings are; with a gradient only when used
         with torch.set_grad_enabled(
             "patristic" in self.extra_losses or "quartet" in self.extra_losses

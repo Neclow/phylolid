@@ -45,6 +45,13 @@ def parse_args():
         default=0.5,
         help="How fast a relative's share falls with its distance in Glottolog levels",
     )
+    # Hierarchical cross-entropy (src/lid/model.py, hxe_loss); 0: cross-entropy
+    parser.add_argument(
+        "--hxe-alpha",
+        type=float,
+        default=0.0,
+        help="Hierarchical cross-entropy (Bertinetto et al. 2020) instead of cross-entropy: the log-probability of each node down the true class's path given its parent, weighted by exp(-alpha * depth); not with soft labels or the tree softmax",
+    )
     # Losses on the sentence embeddings against the tree (src/lid/tree_losses.py, src/lid/model.py), after
     # phylogeny-guided-lid
     parser.add_argument(
@@ -112,6 +119,11 @@ def parse_args():
         parser.error("--gradnorm needs --extra-losses")
     if args.gradnorm and args.extra_loss_weights:
         parser.error("--gradnorm learns the weights: no --extra-loss-weights")
+    # Hierarchical cross-entropy has its own target (the true class) and output (one softmax over the classes)
+    if args.hxe_alpha and args.soft_lambda:
+        parser.error("--hxe-alpha: not with --soft-lambda")
+    if args.hxe_alpha and args.tree_softmax:
+        parser.error("--hxe-alpha: not with --tree-softmax")
     # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
     if "phylonn" in extra and args.tree == "huffman":
         parser.error("--extra-losses phylonn needs --tree glottolog or glottolog2")
@@ -189,6 +201,7 @@ def main():
         tree_softmax=args.tree_softmax,
         spelling=args.spelling,
         branch_lengths="exponential" if args.tree == "glottolog2" else "levels",
+        hxe_alpha=args.hxe_alpha,
         lineages=class_lineages,
     )
 

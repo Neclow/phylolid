@@ -9,6 +9,7 @@ from ete4 import Tree
 from src.lid.tree import (
     IGNORE,
     huffman_lineages,
+    hxe_layout,
     level_labels,
     levels,
     newick,
@@ -73,6 +74,24 @@ def test_exponential_tree_distances():
     assert distances[2, 3] == 0.5
     assert torch.equal(distances.diagonal(), torch.zeros(7))
     assert distances[0, 4].isnan() and distances[5, 6].isnan()
+
+
+def test_hxe_layout():
+    members, paths = hxe_layout(LINEAGES)
+    # Nodes in order of appearance: f, g, a, b, l, d, e, p, q (the pseudo-family's members hang from the root)
+    assert paths.tolist() == [
+        [0, 1, 2],
+        [0, 1, 3],
+        [0, 4, -1],
+        [0, 4, 5],
+        [6, -1, -1],
+        [7, -1, -1],
+        [8, -1, -1],
+    ]
+    # Each node holds the classes at or below it: f all five of its family, the language l itself and its dialect d
+    assert members[0].tolist() == [True] * 4 + [False] * 3
+    assert members[4].tolist() == [False, False, True, True, False, False, False]
+    assert members.sum(dim=1).tolist() == [4, 2, 1, 1, 2, 1, 1, 1, 1]
 
 
 def test_level_labels():

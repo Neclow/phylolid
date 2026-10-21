@@ -60,6 +60,42 @@ def test_one_hot_targets_are_cross_entropy():
     assert torch.allclose(loss(logits, torch.eye(3)[target]), loss(logits, target))
 
 
+def test_hxe_loss():
+    # Family f (a and b sisters below g, c further), a language l above its dialect d, an isolate e
+    lineages = [
+        ("f", "g", "a"),
+        ("f", "g", "b"),
+        ("f", "c"),
+        ("f", "l"),
+        ("f", "l", "d"),
+        ("e",),
+    ]
+    logits = torch.randn(3, 6)
+    target = torch.tensor([0, 3, 5])
+    hxe = lambda alpha: LitFastText(
+        10, list("abcdef"), 4, 0.1, hxe_alpha=alpha, lineages=lineages
+    ).hxe_loss(logits, target)
+    # alpha 0: the conditionals' logs add up to cross-entropy
+    assert torch.allclose(hxe(0.0), torch.nn.functional.cross_entropy(logits, target))
+    # a: f at depth 1, g | f at depth 2, a | g at depth 3; l: f, then l | f, then l itself | l (its dialect below it) at
+    # depth 3; the isolate e: e at depth 1
+    p = logits.softmax(dim=-1)
+    w = lambda depth: torch.exp(torch.tensor(-0.5 * depth))
+    log = torch.log
+    expected = -torch.stack(
+        [
+            w(1) * log(p[0, :5].sum())
+            + w(2) * log(p[0, :2].sum() / p[0, :5].sum())
+            + w(3) * log(p[0, 0] / p[0, :2].sum()),
+            w(1) * log(p[1, :5].sum())
+            + w(2) * log(p[1, 3:5].sum() / p[1, :5].sum())
+            + w(3) * log(p[1, 3] / p[1, 3:5].sum()),
+            w(1) * log(p[2, 5]),
+        ]
+    ).mean()
+    assert torch.allclose(hxe(0.5), expected, atol=1e-6)
+
+
 def test_tree_softmax():
     # Family f (a and b sisters, c further), an isolate e
     layout, groups = tree_softmax_layout(
@@ -76,9 +112,10 @@ def test_tree_softmax():
 
 
 @pytest.mark.parametrize(
-    "tree_softmax, gradnorm", [(False, False), (True, False), (False, True)]
+    "tree_softmax, gradnorm, hxe_alpha",
+    [(False, False, 0.0), (True, False, 0.0), (False, True, 0.0), (False, False, 0.5)],
 )
-def test_training_and_prediction(tmp_path, tree_softmax, gradnorm):
+def test_training_and_prediction(tmp_path, tree_softmax, gradnorm, hxe_alpha):
     # Two classes, a train and a dev split: one epoch on the CPU, scored on dev
     for split in ["train", "dev"]:
         write(tmp_path / split / "abcd1234" / "abc_Latn_cbc.txt", "the cat\nthe dog\n")
@@ -93,18 +130,19 @@ def test_training_and_prediction(tmp_path, tree_softmax, gradnorm):
         )
         for split in ["train", "dev"]
     ]
-    # Soft labels on: the two classes are sisters
+    # Soft labels on, unless hierarchical cross-entropy: the two classes are sisters
     model = LitFastText(
         features.size,
         classes,
         dim=4,
         lr=0.1,
-        lam=0.1,
+        lam=0.0 if hxe_alpha else 0.1,
         patristic_weight=0.1,
         quartet_weight=0.1,
         phylonn_weight=0.1,
         tree_softmax=tree_softmax,
         gradnorm=gradnorm,
+        hxe_alpha=hxe_alpha,
         lineages=[("f", "abcd1234"), ("f", "efgh1234")],
     )
     trainer = Trainer(
