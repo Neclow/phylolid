@@ -13,20 +13,33 @@ from src._config import PSEUDO_FAMILIES
 IGNORE = -100
 # Tree softmax: the child through which a class with another class below it is chosen (a language above its dialect)
 STOP = "<stop>"
+# Branch lengths of the tree distances: one per Glottolog level, or exponential and ultrametric (tree_distances)
+BRANCH_LENGTHS = ["levels", "exponential"]
+
+
+def shared(a, b):
+    """Nodes two lineages (family ... languoid) share from the family down: their lowest common ancestor's depth + 1."""
+    common = 0
+    while common < min(len(a), len(b)) and a[common] == b[common]:
+        common += 1
+    return common
 
 
 def levels(a, b):
     """Glottolog levels between two lineages (family ... languoid): up from one to their lowest common ancestor, then
     down to the other (sisters: 2)."""
-    common = 0
-    while common < min(len(a), len(b)) and a[common] == b[common]:
-        common += 1
-    return len(a) + len(b) - 2 * common
+    return len(a) + len(b) - 2 * shared(a, b)
 
 
-def tree_distances(lineages):
-    """Glottolog levels between the classes of one family, NaN between classes of different families or of a
-    pseudo-family (no tree relates them); 0 on the diagonal."""
+def tree_distances(lineages, branch_lengths="levels"):
+    """Path distances between the classes of one family, NaN between classes of different families or of a
+    pseudo-family (no tree relates them); 0 on the diagonal. Branch lengths: one per Glottolog level, or exponential
+    (the family's first branches 1/2, the next 1/4, and so on, as glottoTrees after Venditti et al. 2010) with every
+    class stretched to the depth of the family's deepest, D (ultrametric), so that two classes whose lowest common
+    ancestor is at depth k (the family: 0) are 2 (2^-k - 2^-D) apart."""
+    deepest = {}
+    for lineage in lineages:
+        deepest[lineage[0]] = max(deepest.get(lineage[0], 0), len(lineage) - 1)
     distances = torch.full((len(lineages), len(lineages)), float("nan"))
     for a, lineage in enumerate(lineages):
         distances[a, a] = 0
@@ -34,7 +47,11 @@ def tree_distances(lineages):
             continue
         for b, other in enumerate(lineages):
             if b != a and other[0] == lineage[0]:
-                distances[a, b] = levels(lineage, other)
+                if branch_lengths == "levels":
+                    distances[a, b] = levels(lineage, other)
+                else:
+                    k = shared(lineage, other) - 1
+                    distances[a, b] = 2 * (2.0**-k - 2.0 ** -deepest[lineage[0]])
     return distances
 
 

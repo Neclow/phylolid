@@ -55,11 +55,12 @@ class FastText(nn.Module):
         return self.linear(self.embedding(ids, offsets))
 
 
-def soft_targets(lineages, lam, beta):
+def soft_targets(lineages, lam, beta, branch_lengths="levels"):
     """Training target of each class (rows) over the classes: the class keeps 1 - lam, and lam goes to the other classes
-    of its family, by exp(-beta * levels between them). One-hot (cross-entropy) when lam is 0, and for a class without
-    relatives: an isolate, or a member of a pseudo-family."""
-    distances = tree_distances(lineages)
+    of its family, by exp(-beta * their tree distance) (src/lid/tree.py, tree_distances, with these branch lengths).
+    One-hot (cross-entropy) when lam is 0, and for a class without relatives: an isolate, or a member of a
+    pseudo-family."""
+    distances = tree_distances(lineages, branch_lengths)
     related = torch.isfinite(distances) & ~torch.eye(len(lineages), dtype=torch.bool)
     targets = torch.eye(len(lineages))
     rows = related.any(dim=1)
@@ -94,7 +95,8 @@ class LitFastText(LightningModule):
     quartet_weight times the TreeLosses of the sentence embeddings, plus phylonn_weight times the phylo-nn heads, which
     predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With gradnorm, the weights of
     cross-entropy and these extra losses are learned (gradnorm_loss), all from 1 and summing to the number of losses.
-    With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree.
+    With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree. The soft targets and the tree losses
+    measure the tree with branch_lengths (src/lid/tree.py, BRANCH_LENGTHS).
     The classes' lineages are needed for training only. spelling is only saved with the checkpoint: how its features
     read the text (src/lid/features.py, SPELLINGS), for the predictions to read it alike.
     """
@@ -121,6 +123,7 @@ class LitFastText(LightningModule):
         tree_softmax_units=0,
         spelling="raw",
         gradnorm=False,
+        branch_lengths="levels",
         lineages=None,
     ):
         super().__init__()
@@ -151,9 +154,11 @@ class LitFastText(LightningModule):
                 "phylonn_labels", torch.tensor(labels), persistent=False
             )
             self.register_buffer(
-                "targets", soft_targets(lineages, lam, beta), persistent=False
+                "targets",
+                soft_targets(lineages, lam, beta, branch_lengths),
+                persistent=False,
             )
-            self.tree_losses = TreeLosses(tree_distances(lineages), dim)
+            self.tree_losses = TreeLosses(tree_distances(lineages, branch_lengths), dim)
         self.model = FastText(n_features, len(classes), dim, output)
         self.loss_fn = nn.CrossEntropyLoss()
         self.valid_metrics = MetricCollection(

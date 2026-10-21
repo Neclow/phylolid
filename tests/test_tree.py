@@ -54,6 +54,27 @@ def test_tree_distances():
     assert distances[4, 5].isnan()
 
 
+def test_exponential_tree_distances():
+    # Family f's deepest classes at depth 2 (D); a dialect d below its language c
+    lineages = [
+        ("f", "g", "a"),
+        ("f", "g", "b"),
+        ("f", "c"),
+        ("f", "c", "d"),
+        ("h", "e"),
+        ("arti1236", "p"),
+        ("arti1236", "q"),
+    ]
+    distances = tree_distances(lineages, "exponential")
+    # Sisters below g (depth 1): 2 (1/2 - 1/4); across f's first split (depth 0): 2 (1 - 1/4)
+    assert distances[0, 1] == distances[1, 0] == 0.5
+    assert distances[0, 2] == distances[0, 3] == 1.5
+    # Ultrametric: the dialect is as far from its language as sisters are, c being stretched to depth 2
+    assert distances[2, 3] == 0.5
+    assert torch.equal(distances.diagonal(), torch.zeros(7))
+    assert distances[0, 4].isnan() and distances[5, 6].isnan()
+
+
 def test_level_labels():
     lineages = [
         # Two languages below one H3 ancestor (i), one below another (j)

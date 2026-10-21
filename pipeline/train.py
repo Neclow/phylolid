@@ -69,9 +69,9 @@ def parse_args():
     )
     parser.add_argument(
         "--tree",
-        choices=["glottolog", "huffman"],
+        choices=["glottolog", "glottolog2", "huffman"],
         default="glottolog",
-        help="Tree of the phylogenetic methods: Glottolog's, or fastText's Huffman tree over the training sentences per class (no linguistic information)",
+        help="Tree of the phylogenetic methods: Glottolog's (one length per level), Glottolog's with exponential branch lengths, ultrametric (glottolog2: changes the soft labels and the patristic loss), or fastText's Huffman tree over the training sentences per class (no linguistic information)",
     )
     parser.add_argument(
         "--shuffle-tree",
@@ -114,7 +114,7 @@ def parse_args():
         parser.error("--gradnorm learns the weights: no --extra-loss-weights")
     # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
     if "phylonn" in extra and args.tree == "huffman":
-        parser.error("--extra-losses phylonn needs --tree glottolog")
+        parser.error("--extra-losses phylonn needs --tree glottolog or glottolog2")
     return args
 
 
@@ -159,7 +159,7 @@ def main():
         for split in ["train", "dev"]
     }
     # The tree as the classes' lineages: Glottolog's, from the datasets' mapping, or a Huffman tree
-    if args.tree == "glottolog":
+    if args.tree in ["glottolog", "glottolog2"]:
         lineage = lineages(pd.read_csv(f"{DEFAULT_DATASET_DIR}/glottolog.csv"))
         class_lineages = [lineage[g] for g in classes]
     else:
@@ -188,6 +188,7 @@ def main():
         gradnorm=args.gradnorm,
         tree_softmax=args.tree_softmax,
         spelling=args.spelling,
+        branch_lengths="exponential" if args.tree == "glottolog2" else "levels",
         lineages=class_lineages,
     )
 
