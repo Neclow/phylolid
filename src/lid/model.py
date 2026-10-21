@@ -75,9 +75,9 @@ def soft_targets(lineages, lam, beta):
 PHYLONN_LEVELS = [0, 3]
 # Losses that can be added to cross-entropy, each weighted by <name>_weight
 EXTRA_LOSSES = ["patristic", "quartet", "phylonn"]
-# GradNorm (Chen et al. 2018): its asymmetry (the paper's default) and the learning rate of the extra losses' log weights
+# GradNorm (Chen et al. 2018): its asymmetry and the learning rate of the losses' weights (the paper's defaults)
 GRADNORM_ALPHA = 1.5
-GRADNORM_LR = 0.01
+GRADNORM_LR = 0.025
 
 
 def masked_cross_entropy(logits, labels):
@@ -92,9 +92,9 @@ class LitFastText(LightningModule):
     """Trains FastText with Adam (SparseAdam for the embedding table) and a linearly decaying learning rate (ConLID's
     LIDCE, there with dense AdamW), against soft_targets (lam 0: cross-entropy), plus patristic_weight and
     quartet_weight times the TreeLosses of the sentence embeddings, plus phylonn_weight times the phylo-nn heads, which
-    predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With gradnorm, the weights of these
-    extra losses are learned (gradnorm_loss), from their given values. With tree_softmax, the output layer is a
-    TreeSoftmax over the lineages' tree.
+    predict each sentence's Glottolog groups at PHYLONN_LEVELS from its embedding. With gradnorm, the weights of
+    cross-entropy and these extra losses are learned (gradnorm_loss), all from 1 and summing to the number of losses.
+    With tree_softmax, the output layer is a TreeSoftmax over the lineages' tree.
     The classes' lineages are needed for training only. spelling is only saved with the checkpoint: how its features
     read the text (src/lid/features.py, SPELLINGS), for the predictions to read it alike.
     """
@@ -160,43 +160,45 @@ class LitFastText(LightningModule):
             [KnownAccuracy(len(classes)), KnownMacroF1(len(classes))],
             prefix="valid_",
         )
-        # The extra losses in use (weight > 0); with gradnorm, their weights are learned as logs, from the given ones
+        # The extra losses in use (weight > 0); with gradnorm, their weights and cross-entropy's are learned, from 1
         self.extra_losses = [
             name for name in EXTRA_LOSSES if self.hparams[f"{name}_weight"]
         ]
         if gradnorm:
-            weights = torch.tensor(
-                [self.hparams[f"{name}_weight"] for name in self.extra_losses]
-            )
-            self.log_weights = nn.Parameter(weights.log())
+            self.loss_weights = nn.Parameter(torch.ones(1 + len(self.extra_losses)))
             # Cross-entropy's and the extra losses' values at the first training step (gradnorm_loss)
             self.first_losses = None
 
     def forward(self, ids, offsets):
         return self.model(ids, offsets)
 
-    def gradnorm_loss(self, embeddings, losses):
-        """GradNorm (Chen et al. 2018) with cross-entropy, losses[0], as the fixed reference (weight 1): each extra loss's
-        weighted gradient on the sentence embeddings is pulled to the mean of all of them, times its relative training
-        rate (its loss over its first, over the mean of these ratios) to the power GRADNORM_ALPHA. A loss of the log
-        weights only: the gradient sizes and their target are constants."""
+    def gradnorm_loss(self, losses):
+        """GradNorm (Chen et al. 2018) over cross-entropy, losses[0], and the extra losses: each loss's weighted gradient
+        on the embedding table (the layer they share) is pulled to the mean of all of them, times its relative training
+        rate (its loss over its first, over the mean of these ratios) to the power GRADNORM_ALPHA. A loss of the weights
+        only: the gradient sizes and their target are constants."""
         values = torch.stack(losses).detach()
         if self.first_losses is None:
             self.first_losses = values
+        # Sparse gradients: their rows summed (coalesce) before the size
+        table = self.model.embedding.weight
         sizes = torch.stack(
             [
-                torch.autograd.grad(loss, embeddings, retain_graph=True)[0].norm()
+                torch.autograd.grad(loss, table, retain_graph=True)[0]
+                .coalesce()
+                .values()
+                .norm()
                 for loss in losses
             ]
         )
-        weights = torch.cat([sizes.new_ones(1), self.log_weights.exp()])
-        gradients = weights * sizes
+        # A weighted loss's gradient is its weight times the loss's: no second-order gradient needed
+        gradients = self.loss_weights * sizes
         # A loss that started at 0 (nothing to score, e.g. no quartet) gives no rate: 1
         rates = torch.where(
             self.first_losses > 0, values / self.first_losses, torch.ones_like(values)
         )
         target = gradients.mean().detach() * (rates / rates.mean()) ** GRADNORM_ALPHA
-        return (gradients[1:] - target[1:]).abs().sum()
+        return (gradients - target).abs().sum()
 
     def training_step(self, batch, batch_idx):
         embeddings = self.model.embedding(batch["ids"], batch["offsets"])
@@ -215,15 +217,19 @@ class LitFastText(LightningModule):
             for head, labels in zip(self.phylonn_heads, self.phylonn_labels)
         ]
         values = {"patristic": patristic, "quartet": quartet, "phylonn": sum(phylonn)}
-        extra = [values[name] for name in self.extra_losses]
-        # The extra losses' weights: as given, or learned (GradNorm), as constants in the model's loss
+        names = ["ce", *self.extra_losses]
+        losses = [ce, *(values[name] for name in self.extra_losses)]
+        # The losses' weights: cross-entropy's 1 and the extra losses' as given, or all learned (GradNorm), as constants
+        # in the model's loss
         if self.hparams["gradnorm"]:
-            weights = self.log_weights.exp().detach()
-            gradnorm = self.gradnorm_loss(embeddings, [ce, *extra])
+            weights = self.loss_weights.detach()
+            gradnorm = self.gradnorm_loss(losses)
         else:
-            weights = [self.hparams[f"{name}_weight"] for name in self.extra_losses]
+            weights = [1.0] + [
+                self.hparams[f"{name}_weight"] for name in self.extra_losses
+            ]
             gradnorm = 0.0
-        loss = ce + sum(weight * value for weight, value in zip(weights, extra))
+        loss = sum(weight * value for weight, value in zip(weights, losses))
         probes = 0.0 if "phylonn" in self.extra_losses else values["phylonn"]
         # The number of texts (Lightning would infer it from the ids)
         n = len(batch["target"])
@@ -238,15 +244,12 @@ class LitFastText(LightningModule):
                 f"train_phylonn_h{level}_loss": value
                 for level, value in zip(PHYLONN_LEVELS, phylonn)
             }
-            | {
-                f"train_{name}_weight": weight
-                for name, weight in zip(self.extra_losses, weights)
-            },
+            | {f"train_{name}_weight": weight for name, weight in zip(names, weights)},
             batch_size=n,
         )
-        # train_loss is the model's objective; the probes and the log weights (GradNorm) train on their own losses
+        # train_loss is the model's objective; the probes and the weights (GradNorm) train on their own losses
         optimizers, schedulers = self.optimizers(), self.lr_schedulers()
-        # Lists: configure_optimizers returns two of each, three with GradNorm
+        # Lists: configure_optimizers returns two optimizers (three with GradNorm) and two schedulers
         assert isinstance(optimizers, list) and isinstance(schedulers, list)
         for optimizer in optimizers:
             optimizer.zero_grad()
@@ -257,6 +260,10 @@ class LitFastText(LightningModule):
         dense.step()
         for optimizer in weights_optimizer:
             optimizer.optimizer.step()
+            # GradNorm's weights kept positive and summing to the number of losses
+            with torch.no_grad():
+                self.loss_weights.clamp_(min=1e-8)
+                self.loss_weights.mul_(len(self.loss_weights) / self.loss_weights.sum())
         for scheduler in schedulers:
             scheduler.step()
 
@@ -274,8 +281,8 @@ class LitFastText(LightningModule):
         # batch touches; without weight decay, AdamW is Adam, and SparseAdam its sparse form
         lr, betas, eps = self.hparams["lr"], (0.9, 0.999), 1e-6
         embedding = self.model.embedding.weight
-        # GradNorm's log weights take their own optimizer
-        own = [embedding] + ([self.log_weights] if self.hparams["gradnorm"] else [])
+        # GradNorm's weights take their own optimizer
+        own = [embedding] + ([self.loss_weights] if self.hparams["gradnorm"] else [])
         optimizers = [
             torch.optim.SparseAdam([embedding], lr=lr, betas=betas, eps=eps),
             torch.optim.AdamW(
@@ -286,8 +293,6 @@ class LitFastText(LightningModule):
                 weight_decay=0,
             ),
         ]
-        if self.hparams["gradnorm"]:
-            optimizers.append(torch.optim.Adam([self.log_weights], lr=GRADNORM_LR))
         schedulers = [
             torch.optim.lr_scheduler.LinearLR(
                 optimizer,
@@ -297,6 +302,9 @@ class LitFastText(LightningModule):
             )
             for optimizer in optimizers
         ]
+        # GradNorm's weights at a constant learning rate
+        if self.hparams["gradnorm"]:
+            optimizers.append(torch.optim.Adam([self.loss_weights], lr=GRADNORM_LR))
         return optimizers, schedulers
 
 

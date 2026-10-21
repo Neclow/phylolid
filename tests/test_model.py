@@ -116,20 +116,19 @@ def test_training_and_prediction(tmp_path, tree_softmax, gradnorm):
         enable_model_summary=False,
     )
     trainer.fit(model, train, dev)
-    # GradNorm moved the extra losses' weights from where they started
+    # GradNorm moved the four losses' weights from 1, still summing to 4
     if gradnorm:
-        assert not torch.allclose(model.log_weights.exp(), torch.full((3,), 0.1))
-    # One step per batch: SparseAdam for the embedding table, AdamW for the rest (Adam for GradNorm's log weights), all
-    # down to a learning rate of 0
+        assert not torch.allclose(model.loss_weights, torch.ones(4))
+        assert model.loss_weights.sum().item() == pytest.approx(4)
+    # One step per batch: SparseAdam for the embedding table, AdamW for the rest, both down to a learning rate of 0 (and
+    # Adam for GradNorm's weights)
     assert trainer.global_step == len(train)
     sparse, dense, *weights = trainer.optimizers
     assert isinstance(sparse, torch.optim.SparseAdam)
     assert isinstance(dense, torch.optim.AdamW)
     assert sparse.param_groups[0]["params"] == [model.model.embedding.weight]
     assert len(weights) == gradnorm
-    assert [o.param_groups[0]["lr"] for o in trainer.optimizers] == pytest.approx(
-        [0] * len(trainer.optimizers)
-    )
+    assert [o.param_groups[0]["lr"] for o in [sparse, dense]] == pytest.approx([0, 0])
     assert {"valid_loss", "valid_KnownAccuracy", "valid_KnownMacroF1"} <= set(
         trainer.callback_metrics
     )
@@ -156,11 +155,11 @@ def test_gradnorm_raises_a_small_loss():
         gradnorm=True,
         lineages=lineages,
     )
-    embeddings = torch.randn(2, 4, requires_grad=True)
-    # An extra loss whose gradient is far smaller than cross-entropy's: GradNorm raises its weight
-    loss = model.gradnorm_loss(
-        embeddings, [(10 * embeddings).sum(), (0.01 * embeddings).sum()]
-    )
+    # Two texts: ids [1, 2] and [7]
+    embeddings = model.model.embedding(torch.tensor([1, 2, 7]), torch.tensor([0, 2]))
+    # An extra loss whose gradient is far smaller than cross-entropy's: GradNorm raises its weight, lowers
+    # cross-entropy's
+    loss = model.gradnorm_loss([(10 * embeddings).sum(), (0.01 * embeddings).sum()])
     loss.backward()
-    grad = model.log_weights.grad
-    assert grad is not None and grad[0] < 0
+    grad = model.loss_weights.grad
+    assert grad is not None and grad[0] > 0 and grad[1] < 0

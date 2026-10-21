@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--gradnorm",
         action="store_true",
-        help="Learn the extra losses' weights during training with GradNorm, cross-entropy's fixed at 1 (otherwise each weighs 1)",
+        help="Learn the weights of cross-entropy and the extra losses during training with GradNorm (Chen et al. 2018), all from 1 and summing to the number of losses",
     )
     parser.add_argument(
         "--tree-softmax",
