@@ -53,6 +53,11 @@ def parse_args():
         help="Losses added to cross-entropy, comma-separated: patristic (1 - correlation of class-centroid and tree distances), quartet (class centroids), phylonn (heads predicting each sentence's family and H3 ancestor; otherwise they only probe)",
     )
     parser.add_argument(
+        "--extra-loss-weights",
+        default="",
+        help="Weights of the --extra-losses, comma-separated in their order (cross-entropy's is 1); default: each 1",
+    )
+    parser.add_argument(
         "--gradnorm",
         action="store_true",
         help="Learn the weights of cross-entropy and the extra losses during training with GradNorm (Chen et al. 2018), all from 1 and summing to the number of losses",
@@ -101,8 +106,12 @@ def parse_args():
     unknown = set(extra) - set(EXTRA_LOSSES)
     if unknown:
         parser.error(f"--extra-losses: {sorted(unknown)} not in {EXTRA_LOSSES}")
+    if args.extra_loss_weights and len(extra_loss_weights(args)) != len(extra):
+        parser.error("--extra-loss-weights: one weight per --extra-losses")
     if args.gradnorm and not extra:
         parser.error("--gradnorm needs --extra-losses")
+    if args.gradnorm and args.extra_loss_weights:
+        parser.error("--gradnorm learns the weights: no --extra-loss-weights")
     # The phylo-nn heads predict named levels (family, H3), which a Huffman tree does not have
     if "phylonn" in extra and args.tree == "huffman":
         parser.error("--extra-losses phylonn needs --tree glottolog")
@@ -112,6 +121,13 @@ def parse_args():
 def extra_losses(args):
     """The --extra-losses names, a list (kept as the given string in args, as the runs table records it)."""
     return [name for name in args.extra_losses.split(",") if name]
+
+
+def extra_loss_weights(args):
+    """The --extra-loss-weights, a list of floats: each 1 when not given."""
+    if not args.extra_loss_weights:
+        return [1.0] * len(extra_losses(args))
+    return [float(weight) for weight in args.extra_loss_weights.split(",")]
 
 
 def main():
@@ -164,8 +180,11 @@ def main():
         args.lr,
         lam=args.soft_lambda,
         beta=args.soft_beta,
-        # Each extra loss starts at weight 1 (and stays there without GradNorm)
-        **{f"{name}_weight": 1.0 for name in extra_losses(args)},
+        # The extra losses' weights; with GradNorm, they only say which losses are used
+        **{
+            f"{name}_weight": weight
+            for name, weight in zip(extra_losses(args), extra_loss_weights(args))
+        },
         gradnorm=args.gradnorm,
         tree_softmax=args.tree_softmax,
         spelling=args.spelling,
