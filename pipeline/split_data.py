@@ -65,14 +65,11 @@ def tree_nodes(path):
     return {node.name for node in Tree(open(path), parser=1).traverse()}
 
 
-def label_files(label):
-    # A label's files <label>_<source>.txt by name, in any label's folder: GlotLID-C v3.1 files Southern Sotho's
-    # sot_Latn_smoldoc.txt under Santali (sat_Latn)
-    return glob(f"{GLOTLID_DIR}/*/{label}_*.txt")
-
-
 def count_lines(label):
-    return sum(open(path, "rb").read().count(b"\n") for path in label_files(label))
+    return sum(
+        open(path, "rb").read().count(b"\n")
+        for path in glob(f"{GLOTLID_DIR}/{label}/*.txt")
+    )
 
 
 def assign_roles(labels, models, languoids):
@@ -155,7 +152,9 @@ def read_class(dataset, labels):
     """A class's sentences as (file name, sentence); Omnilingual sentences get the file name <label>_omnilingual."""
     if dataset == "glotlid-corpus":
         # Files <label>_<source>.txt in name order: a duplicate is kept in the first
-        paths = sorted(path for label in labels for path in label_files(label))
+        paths = sorted(
+            path for label in labels for path in glob(f"{GLOTLID_DIR}/{label}/*.txt")
+        )
         return unique_sentences(read_lines(paths))
     pairs = (
         (f"{label}_omnilingual", sentence)
